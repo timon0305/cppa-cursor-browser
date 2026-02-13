@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+{% block title %}Projects — Cursor Chat Browser{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Projects</h1>
+    <p class="text-muted">Browse your Cursor chat conversations by project. Click on a project to view its conversations.</p>
+  </div>
+  <div class="btn-group" style="flex-direction:column;align-items:flex-end;gap:0.25rem">
+    <div style="display:flex;gap:0.5rem">
+      <button class="btn btn-outline btn-sm" id="btn-export-all" onclick="runExport('all')">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Export all
+      </button>
+      <button class="btn btn-outline btn-sm" id="btn-export-new" onclick="runExport('last')">
+        Export new since last
+      </button>
+    </div>
+    <p id="last-export-time" class="text-muted text-sm" style="margin:0"></p>
+  </div>
+</div>
+<p id="export-msg" class="text-muted text-sm" style="display:none"></p>
+
+<div id="loading" class="loading">
+  <div class="spinner"></div>
+  <p>Loading projects...</p>
+</div>
+
+<div id="projects-container" style="display:none"></div>
+
+<script>
+document.addEventListener('DOMContentLoaded', async () => {
+  try {
+    // Fetch projects and export state in parallel
+    const [projRes, stateRes] = await Promise.all([
+      fetch('/api/workspaces'),
+      fetch('/api/export/state')
+    ]);
+    const projects = await projRes.json();
+    renderProjects(projects);
+
+    // Show last export time
+    try {
+      const state = await stateRes.json();
+      if (state.lastExportTime) {
+        const d = new Date(state.lastExportTime);
+        if (!isNaN(d.getTime())) {
+          document.getElementById('last-export-time').textContent =
+            `Last export: ${d.toLocaleString()} (${state.exportedCount || 0} chats)`;
+        }
+      }
+    } catch(e) {}
+  } catch (e) {
+    document.getElementById('loading').innerHTML = '<p class="text-danger">Failed to load projects.</p>';
+  }
+});
+
+function renderProjects(projects) {
+  const loading = document.getElementById('loading');
+  const container = document.getElementById('projects-container');
+  loading.style.display = 'none';
+  container.style.display = 'block';
+
+  const withConvos = projects.filter(p => p.conversationCount > 0);
+  const withoutConvos = projects.filter(p => p.conversationCount === 0);
+
+  let html = '';
+
+  if (withConvos.length) {
+    html += `<div class="card">
+      <div class="card-header">
+        <h2 class="card-title">Projects with Conversations</h2>
+        <p class="text-muted text-sm">${withConvos.length} project${withConvos.length !== 1 ? 's' : ''} with chat history</p>
+      </div>
+      <div class="card-body">
+        <table class="table">
+          <thead><tr><th>Project</th><th>Conversations</th><th>Last Modified</th></tr></thead>
+          <tbody>`;
+    for (const p of withConvos) {
+      html += `<tr>
+        <td><a href="/workspace/${p.id}" class="link">${escapeHtml(p.name)}</a></td>
+        <td><span class="text-success">${p.conversationCount} conversation${p.conversationCount !== 1 ? 's' : ''}</span></td>
+        <td>${formatDate(p.lastModified)}</td>
+      </tr>`;
+    }
+    html += '</tbody></table></div></div>';
+  }
+
+  if (withoutConvos.length) {
+    html += `<div class="card" style="margin-top:1.5rem">
+      <div class="card-header">
+        <h2 class="card-title">Projects without Conversations</h2>
+        <p class="text-muted text-sm">${withoutConvos.length} project${withoutConvos.length !== 1 ? 's' : ''} with no chat history found</p>
+      </div>
+      <div class="card-body">
+        <div class="alert alert-info">These projects may appear empty due to folder relocation, Cursor updates, or conversations being stored in a different location.</div>
+        <table class="table">
+          <thead><tr><th>Project</th><th>Conversations</th><th>Last Modified</th></tr></thead>
+          <tbody>`;
+    for (const p of withoutConvos) {
+      html += `<tr>
+        <td><a href="/workspace/${p.id}" class="link">${escapeHtml(p.name)}</a></td>
+        <td><span class="text-muted">0</span></td>
+        <td>${formatDate(p.lastModified)}</td>
+      </tr>`;
+    }
+    html += '</tbody></table></div></div>';
+  }
+
+  if (!projects.length) {
+    html = `<div class="card"><div class="card-header"><h2 class="card-title">No Projects Found</h2></div>
+      <div class="card-body"><div class="alert alert-info">No Cursor workspace projects were found. Check the <a href="/config">configuration page</a>.</div></div></div>`;
+  }
+
+  container.innerHTML = html;
+}
+
+async function runExport(since) {
+  const btnAll = document.getElementById('btn-export-all');
+  const btnNew = document.getElementById('btn-export-new');
+  const msgEl = document.getElementById('export-msg');
+  btnAll.disabled = true;
+  btnNew.disabled = true;
+  msgEl.style.display = 'block';
+  msgEl.textContent = 'Exporting...';
+
+  try {
+    const res = await fetch('/api/export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ since, zip: true })
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || 'Export failed');
+    }
+    const blob = await res.blob();
+    const count = res.headers.get('x-export-count') || '0';
+
+    // Use File System Access API for save-as dialog (remembers last location)
+    if (window.showSaveFilePicker) {
+      try {
+        const handle = await window.showSaveFilePicker({
+          suggestedName: 'cursor-export.zip',
+          types: [{ description: 'ZIP Archive', accept: { 'application/zip': ['.zip'] } }]
+        });
+        const writable = await handle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+      } catch (e) {
+        if (e.name === 'AbortError') {
+          msgEl.textContent = 'Export cancelled.';
+          return;
+        }
+        throw e;
+      }
+    } else {
+      // Fallback for browsers without File System Access API
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'cursor-export.zip';
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    msgEl.textContent = `Exported ${count} chat(s). Zip saved.`;
+
+    // Update last export time display
+    document.getElementById('last-export-time').textContent =
+      `Last export: ${new Date().toLocaleString()} (${count} chats)`;
+  } catch (e) {
+    msgEl.textContent = String(e.message || e);
+  } finally {
+    btnAll.disabled = false;
+    btnNew.disabled = false;
+  }
+}
+</script>
+{% endblock %}

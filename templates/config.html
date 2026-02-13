@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}Configuration — Cursor Chat Browser{% endblock %}
+{% block content %}
+<div class="config-page">
+  <h1>Configuration</h1>
+
+  <div class="form-group">
+    <label for="workspace-path">Cursor Workspace Path</label>
+    <input type="text" id="workspace-path" class="input" placeholder="/path/to/cursor/workspaces">
+    <p class="text-muted text-sm">Path to your Cursor workspace storage directory</p>
+  </div>
+
+  <div id="status-msg" style="display:none"></div>
+
+  <div class="btn-group" style="margin-top:1rem">
+    <button class="btn btn-primary" onclick="validateAndSave()">Save Configuration</button>
+  </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', async () => {
+  const stored = localStorage.getItem('workspacePath');
+  if (stored) {
+    document.getElementById('workspace-path').value = stored;
+    return;
+  }
+
+  // Auto-detect
+  try {
+    const envRes = await fetch('/api/detect-environment');
+    const env = await envRes.json();
+    const userRes = await fetch('/api/get-username');
+    const userData = await userRes.json();
+    const username = userData.username || 'YOUR_USERNAME';
+
+    let detected = '';
+    if (env.isWSL) {
+      detected = `/mnt/c/Users/${username}/AppData/Roaming/Cursor/User/workspaceStorage`;
+    } else if (env.os === 'win32') {
+      detected = `C:\\Users\\${username}\\AppData\\Roaming\\Cursor\\User\\workspaceStorage`;
+    } else if (env.os === 'darwin') {
+      detected = '~/Library/Application Support/Cursor/User/workspaceStorage';
+    } else if (env.os === 'linux') {
+      detected = env.isRemote ? '~/.cursor-server/data/User/workspaceStorage' : '~/.config/Cursor/User/workspaceStorage';
+    }
+
+    if (detected) {
+      // Try to validate automatically
+      const valRes = await fetch('/api/validate-path', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: detected })
+      });
+      const valData = await valRes.json();
+      if (valData.valid) {
+        localStorage.setItem('workspacePath', detected);
+        await fetch('/api/set-workspace', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: detected })
+        });
+        window.location.href = '/';
+        return;
+      }
+    }
+    document.getElementById('workspace-path').value = detected;
+  } catch (e) {
+    console.error('Auto-detect failed:', e);
+  }
+});
+
+async function validateAndSave() {
+  const input = document.getElementById('workspace-path');
+  const statusEl = document.getElementById('status-msg');
+  const path = input.value.trim();
+  if (!path) return;
+
+  try {
+    const res = await fetch('/api/validate-path', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path })
+    });
+    const data = await res.json();
+
+    if (data.valid) {
+      localStorage.setItem('workspacePath', path);
+      await fetch('/api/set-workspace', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path })
+      });
+      statusEl.className = 'alert alert-success';
+      statusEl.textContent = `Found ${data.workspaceCount} workspaces in the specified location`;
+      statusEl.style.display = 'block';
+      setTimeout(() => { window.location.href = '/'; }, 1000);
+    } else {
+      statusEl.className = 'alert alert-danger';
+      statusEl.textContent = 'No workspaces found in the specified location';
+      statusEl.style.display = 'block';
+    }
+  } catch (e) {
+    statusEl.className = 'alert alert-danger';
+    statusEl.textContent = 'Failed to validate path.';
+    statusEl.style.display = 'block';
+  }
+}
+</script>
+{% endblock %}

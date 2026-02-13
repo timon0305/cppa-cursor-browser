@@ -1,0 +1,329 @@
+{% extends "base.html" %}
+{% block title %}Workspace — Cursor Chat Browser{% endblock %}
+{% block content %}
+<div class="workspace-page">
+  <!-- Header -->
+  <div class="flex-between" style="margin-bottom:1rem">
+    <a href="/" class="btn btn-ghost btn-sm">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+      Back to Projects
+    </a>
+    <div class="btn-group" id="action-buttons" style="display:none">
+      <button class="btn btn-outline btn-sm" onclick="copyAllMarkdown()" title="Copy all as Markdown">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+        Copy All
+      </button>
+      <div class="dropdown">
+        <button class="btn btn-outline btn-sm dropdown-toggle" onclick="this.parentElement.classList.toggle('open')">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download
+        </button>
+        <div class="dropdown-menu">
+          <a class="dropdown-item" href="#" onclick="downloadAs('md'); return false;">Download as Markdown</a>
+          <a class="dropdown-item" href="#" onclick="downloadAs('html'); return false;">Download as HTML</a>
+          <a class="dropdown-item" href="#" onclick="downloadAs('pdf'); return false;">Download as PDF</a>
+          <a class="dropdown-item" href="#" onclick="downloadAs('json'); return false;">Download as JSON</a>
+          <a class="dropdown-item" href="#" onclick="downloadAs('csv'); return false;">Download as CSV</a>
+          <a class="dropdown-item" href="#" id="dl-code-edits" onclick="downloadAs('csv-code'); return false;" style="display:none">Download code edits (CSV)</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Project info -->
+  <div class="project-info card" style="margin-bottom:1.5rem">
+    <h2 id="project-name">Loading...</h2>
+    <p class="text-sm text-muted" id="project-hash" style="opacity:0.5;font-family:monospace;font-size:0.75rem"></p>
+    <p class="text-sm text-muted" id="convo-count"></p>
+  </div>
+
+  <div id="loading" class="loading">
+    <div class="spinner"></div>
+    <p>Loading conversations...</p>
+  </div>
+
+  <!-- Content grid -->
+  <div id="content-grid" class="workspace-grid" style="display:none">
+    <div class="sidebar" id="sidebar"></div>
+    <div class="main-content" id="main-content">
+      <div class="card" style="padding:2rem;text-align:center">
+        <p class="text-muted">No conversation selected</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const WORKSPACE_ID = "{{ workspace_id }}";
+let allTabs = [];
+let selectedTab = null;
+
+document.addEventListener('DOMContentLoaded', async () => {
+  try {
+    const [wsRes, tabsRes] = await Promise.all([
+      fetch(`/api/workspaces/${WORKSPACE_ID}`),
+      fetch(`/api/workspaces/${WORKSPACE_ID}/tabs`)
+    ]);
+    const wsInfo = await wsRes.json();
+    const data = await tabsRes.json();
+    allTabs = data.tabs || [];
+
+    const projectName = wsInfo.name || WORKSPACE_ID;
+    document.getElementById('project-name').textContent = projectName;
+    if (WORKSPACE_ID !== 'global' && projectName !== WORKSPACE_ID) {
+      document.getElementById('project-hash').textContent = WORKSPACE_ID;
+    }
+
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('content-grid').style.display = 'grid';
+    document.getElementById('convo-count').textContent = `${allTabs.length} conversations`;
+
+    renderSidebar();
+
+    const params = new URLSearchParams(window.location.search);
+    const tabParam = params.get('tab');
+    if (tabParam && allTabs.find(t => t.id === tabParam)) {
+      selectTab(tabParam);
+    } else if (allTabs.length > 0) {
+      selectTab(allTabs[0].id);
+    }
+  } catch (e) {
+    document.getElementById('loading').innerHTML = '<p class="text-danger">Failed to load workspace.</p>';
+  }
+});
+
+function renderSidebar() {
+  const sidebar = document.getElementById('sidebar');
+  if (!allTabs.length) {
+    sidebar.innerHTML = '<p class="text-muted" style="padding:0.5rem">No conversations found</p>';
+    return;
+  }
+  let html = '<h3 style="margin-bottom:0.5rem;padding:0 0.25rem">Conversations <span class="text-sm text-muted" style="font-weight:400">(' + allTabs.length + ')</span></h3>';
+  for (const tab of allTabs) {
+    const title = escapeHtml(tab.title || `Chat ${tab.id.slice(0,8)}`);
+    const ts = formatDate(tab.timestamp);
+    // Show model if available
+    const model = (tab.metadata && tab.metadata.modelsUsed && tab.metadata.modelsUsed[0]) || '';
+    const modelBadge = model ? `<span style="font-size:0.65rem;opacity:0.5;display:block;margin-top:1px">${escapeHtml(model)}</span>` : '';
+    html += `<button class="sidebar-item" data-id="${tab.id}" onclick="selectTab('${tab.id}')" title="${title}">
+      <div class="sidebar-item-title">${title}</div>
+      <div class="sidebar-item-time">${ts}${modelBadge}</div>
+    </button>`;
+  }
+  // Scroll hint if many items
+  if (allTabs.length > 8) {
+    html += '<div class="sidebar-scroll-hint">Scroll for more</div>';
+  }
+  sidebar.innerHTML = html;
+}
+
+function selectTab(id) {
+  selectedTab = allTabs.find(t => t.id === id);
+  if (!selectedTab) return;
+
+  const url = new URL(window.location);
+  url.searchParams.set('tab', id);
+  window.history.replaceState({}, '', url);
+
+  document.querySelectorAll('.sidebar-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.id === id);
+  });
+
+  document.getElementById('action-buttons').style.display = 'flex';
+
+  const codeEditsBtn = document.getElementById('dl-code-edits');
+  codeEditsBtn.style.display = (selectedTab.codeBlockDiffs && selectedTab.codeBlockDiffs.length) ? 'block' : 'none';
+
+  renderChat(selectedTab);
+
+  // Scroll the active sidebar item into view
+  const activeEl = document.querySelector('.sidebar-item.active');
+  if (activeEl) activeEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
+function renderChat(tab) {
+  const main = document.getElementById('main-content');
+  const bubbles = (tab.bubbles || []).filter(b => b.text && b.text.trim());
+
+  let html = `<div class="card" style="padding:1.5rem">
+    <div class="flex-between" style="margin-bottom:1rem">
+      <h2>${escapeHtml(tab.title)}</h2>
+      <span class="badge">Conversation</span>
+    </div>`;
+
+  // Metadata summary
+  if (tab.metadata) {
+    const m = tab.metadata;
+    let meta = [];
+    if (m.modelsUsed && m.modelsUsed.length) meta.push(`Models: ${m.modelsUsed.join(', ')}`);
+    if (m.totalInputTokens || m.totalOutputTokens) {
+      let t = `Tokens: in ${fmtNum(m.totalInputTokens || 0)}, out ${fmtNum(m.totalOutputTokens || 0)}`;
+      if (m.totalCachedTokens) t += `, cached ${fmtNum(m.totalCachedTokens)}`;
+      meta.push(t);
+    }
+    if (m.maxContextTokensUsed && m.contextTokenLimit) {
+      meta.push(`Context: ${fmtNum(m.maxContextTokensUsed)} / ${fmtNum(m.contextTokenLimit)} tokens used`);
+    }
+    if (m.totalResponseTimeMs) meta.push(`Total response time: ${(m.totalResponseTimeMs / 1000).toFixed(1)}s`);
+    if (m.totalCost != null) meta.push(`Cost: $${Number(m.totalCost).toFixed(4)}`);
+    if (m.totalToolCalls) meta.push(`Tool calls: ${m.totalToolCalls}`);
+    if (m.totalThinkingDurationMs) meta.push(`Total thinking: ${(m.totalThinkingDurationMs / 1000).toFixed(1)}s`);
+    if (m.totalLinesAdded || m.totalLinesRemoved) {
+      let lm = 'Lines: ';
+      if (m.totalLinesAdded) lm += `+${fmtNum(m.totalLinesAdded)}`;
+      if (m.totalLinesRemoved) lm += ` -${fmtNum(m.totalLinesRemoved)}`;
+      meta.push(lm.trim());
+    }
+    if (m.totalFilesAdded || m.totalFilesRemoved) {
+      let fm = 'Files: ';
+      if (m.totalFilesAdded) fm += `+${m.totalFilesAdded}`;
+      if (m.totalFilesRemoved) fm += ` -${m.totalFilesRemoved}`;
+      meta.push(fm.trim());
+    }
+    if (meta.length) {
+      html += `<div class="text-sm text-muted" style="margin-bottom:1rem">${meta.join(' &bull; ')}</div>`;
+    }
+  }
+
+  html += '<div class="chat-bubbles">';
+  for (const bubble of bubbles) {
+    const isUser = bubble.type === 'user';
+    const cls = isUser ? 'bubble-user' : 'bubble-ai';
+    const label = isUser ? 'You' : 'AI';
+    const badgeCls = isUser ? 'badge' : 'badge badge-secondary';
+    const ts = formatDate(bubble.timestamp);
+
+    let metaHtml = '';
+    if (bubble.metadata) {
+      const bm = bubble.metadata;
+      let parts = [];
+      if (bm.modelName && bm.modelName !== 'default') parts.push(bm.modelName);
+      // Only show token counts if they are actually populated (non-zero)
+      if (bm.inputTokens > 0 || bm.outputTokens > 0) {
+        let t = `Tokens: in ${fmtNum(bm.inputTokens || 0)}, out ${fmtNum(bm.outputTokens || 0)}`;
+        if (bm.cachedTokens > 0) t += `, cached ${fmtNum(bm.cachedTokens)}`;
+        parts.push(t);
+      }
+      if (bm.responseTimeMs != null) parts.push(`Response: ${(bm.responseTimeMs / 1000).toFixed(1)}s`);
+      if (bm.cost != null) parts.push(`Cost: $${Number(bm.cost).toFixed(4)}`);
+      // Context window info (from user bubbles)
+      if (bm.contextTokensUsed > 0 && bm.contextTokenLimit > 0) {
+        const pct = ((bm.contextTokensUsed / bm.contextTokenLimit) * 100).toFixed(0);
+        parts.push(`Context: ${fmtNum(bm.contextTokensUsed)} / ${fmtNum(bm.contextTokenLimit)} (${pct}% used)`);
+      } else if (bm.contextWindowPercent != null) {
+        parts.push(`Context: ${bm.contextWindowPercent.toFixed(1)}% remaining`);
+      }
+      if (parts.length) {
+        metaHtml = `<div class="bubble-meta">${parts.join(' &bull; ')}</div>`;
+      }
+
+      // Thinking block
+      if (bm.thinking) {
+        const thinkText = typeof bm.thinking === 'string' ? bm.thinking : (bm.thinking.text || '');
+        if (thinkText) {
+          const dur = bm.thinkingDurationMs ? ` (${(bm.thinkingDurationMs / 1000).toFixed(1)}s)` : '';
+          metaHtml += `<details class="thinking-block"><summary>Thinking${dur}</summary><div class="thinking-content">${escapeHtml(thinkText)}</div></details>`;
+        }
+      }
+
+      // Tool calls — expanded with input/output
+      if (bm.toolCalls && bm.toolCalls.length) {
+        for (const tc of bm.toolCalls) {
+          metaHtml += renderToolCall(tc);
+        }
+      }
+    }
+
+    html += `<div class="bubble ${cls}">
+      <div class="bubble-header">
+        <span class="${badgeCls}">${label}</span>
+        <span class="text-sm text-muted">${ts}</span>
+      </div>
+      ${metaHtml}
+      <div class="bubble-text prose">${renderMarkdown(bubble.text)}</div>
+    </div>`;
+  }
+  html += '</div></div>';
+
+  main.innerHTML = html;
+
+  main.querySelectorAll('pre code').forEach(block => {
+    hljs.highlightElement(block);
+  });
+}
+
+function renderToolCall(tc) {
+  const name = tc.name || 'unknown';
+  const status = tc.status || '';
+  const summary = tc.summary || name;
+  const statusCls = status === 'completed' ? 'completed' : (status === 'error' ? 'error' : 'running');
+  const icon = getToolIcon(name);
+
+  let bodyHtml = '';
+
+  // Input section
+  if (tc.input) {
+    bodyHtml += `<div class="tool-call-section">
+      <div class="tool-call-section-title">Input</div>
+      <div class="tool-call-content">${escapeHtml(typeof tc.input === 'string' ? tc.input : JSON.stringify(tc.input, null, 2))}</div>
+    </div>`;
+  }
+
+  // Output section
+  if (tc.output) {
+    bodyHtml += `<div class="tool-call-section">
+      <div class="tool-call-section-title">Output</div>
+      <div class="tool-call-content">${escapeHtml(typeof tc.output === 'string' ? tc.output : JSON.stringify(tc.output, null, 2))}</div>
+    </div>`;
+  }
+
+  if (bodyHtml) {
+    return `<details class="tool-call">
+      <summary>${icon} ${escapeHtml(summary)} <span class="tool-call-status ${statusCls}">${status}</span></summary>
+      <div class="tool-call-body">${bodyHtml}</div>
+    </details>`;
+  } else {
+    return `<div class="tool-call">
+      ${icon} ${escapeHtml(summary)} <span class="tool-call-status ${statusCls}">${status}</span>
+    </div>`;
+  }
+}
+
+function getToolIcon(name) {
+  const icons = {
+    'read_file_v2': '<svg class="tool-call-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>',
+    'edit_file_v2': '<svg class="tool-call-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>',
+    'run_terminal_command_v2': '<svg class="tool-call-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>',
+    'ripgrep_raw_search': '<svg class="tool-call-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
+    'semantic_search_full': '<svg class="tool-call-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
+    'glob_file_search': '<svg class="tool-call-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>',
+    'list_dir_v2': '<svg class="tool-call-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>',
+    'web_search': '<svg class="tool-call-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>',
+    'web_fetch': '<svg class="tool-call-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>',
+    'todo_write': '<svg class="tool-call-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>',
+    'read_lints': '<svg class="tool-call-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>',
+  };
+  return icons[name] || '<svg class="tool-call-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 3l-4 4-4-4"/></svg>';
+}
+
+function fmtNum(n) {
+  if (n == null) return '0';
+  return Number(n).toLocaleString();
+}
+
+function renderMarkdown(text) {
+  if (!text) return '';
+  try {
+    return marked.parse(text, { breaks: true, gfm: true });
+  } catch (e) {
+    return escapeHtml(text);
+  }
+}
+
+document.addEventListener('click', e => {
+  if (!e.target.closest('.dropdown')) {
+    document.querySelectorAll('.dropdown.open').forEach(d => d.classList.remove('open'));
+  }
+});
+</script>
+{% endblock %}

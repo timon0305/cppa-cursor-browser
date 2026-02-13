@@ -1,0 +1,67 @@
+"""Workspace path detection mirroring src/utils/workspace-path.ts"""
+
+from __future__ import annotations
+
+import os
+import sys
+import subprocess
+
+from .path_helpers import expand_tilde_path
+
+# Module-level override set via the /api/set-workspace endpoint
+_workspace_path_override: str | None = None
+
+
+def set_workspace_path_override(path: str):
+    global _workspace_path_override
+    _workspace_path_override = path
+
+
+def get_workspace_path_override() -> str | None:
+    return _workspace_path_override
+
+
+def get_default_workspace_path() -> str:
+    """Detect the default Cursor workspace storage path based on OS."""
+    home = os.path.expanduser("~")
+    release = os.uname().release.lower() if hasattr(os, "uname") else ""
+    is_wsl = "microsoft" in release or "wsl" in release
+    is_remote = bool(
+        os.environ.get("SSH_CONNECTION")
+        or os.environ.get("SSH_CLIENT")
+        or os.environ.get("SSH_TTY")
+    )
+
+    if is_wsl:
+        username = os.getenv("USER", "")
+        try:
+            output = subprocess.check_output(
+                ["cmd.exe", "/c", "echo", "%USERNAME%"],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            )
+            username = output.strip()
+        except Exception:
+            pass
+        return f"/mnt/c/Users/{username}/AppData/Roaming/Cursor/User/workspaceStorage"
+
+    if sys.platform == "win32":
+        return os.path.join(home, "AppData", "Roaming", "Cursor", "User", "workspaceStorage")
+    elif sys.platform == "darwin":
+        return os.path.join(home, "Library", "Application Support", "Cursor", "User", "workspaceStorage")
+    elif sys.platform == "linux":
+        if is_remote:
+            return os.path.join(home, ".cursor-server", "data", "User", "workspaceStorage")
+        return os.path.join(home, ".config", "Cursor", "User", "workspaceStorage")
+    else:
+        return os.path.join(home, "workspaceStorage")
+
+
+def resolve_workspace_path() -> str:
+    """Return the effective workspace path (override > env var > default)."""
+    if _workspace_path_override:
+        return expand_tilde_path(_workspace_path_override)
+    env_path = os.environ.get("WORKSPACE_PATH", "").strip()
+    if env_path:
+        return expand_tilde_path(env_path)
+    return get_default_workspace_path()

@@ -1,0 +1,43 @@
+# Bytecode / cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+
+# Virtual envs
+venv/
+.venv/
+env/
+
+# Packaging
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+
+# Environment & secrets
+.env
+.env.local
+.flaskenv
+
+# Flask
+instance/
+
+# Logs & local data
+*.log
+export/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+*.swo
+Thumbs.db
+.DS_Store
+
+# Testing / coverage
+.coverage
+htmlcov/
+coverage.xml

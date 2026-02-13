@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}Search — Cursor Chat Browser{% endblock %}
+{% block content %}
+<div class="search-page">
+  <div class="page-header">
+    <h1>Search</h1>
+    <div class="btn-group">
+      <button class="btn" id="filter-all" onclick="setFilter('all')">All</button>
+      <button class="btn btn-outline" id="filter-chat" onclick="setFilter('chat')">Ask Logs</button>
+      <button class="btn btn-outline" id="filter-composer" onclick="setFilter('composer')">Agent Logs</button>
+    </div>
+  </div>
+
+  <div class="form-group" style="margin-bottom:1.5rem">
+    <div class="search-bar">
+      <input type="text" id="search-input" class="input" placeholder="Search across all logs..." autofocus>
+      <button class="btn btn-primary" onclick="doSearch()">Search</button>
+    </div>
+  </div>
+
+  <div id="loading" class="loading" style="display:none">
+    <div class="spinner"></div>
+    <p>Searching...</p>
+  </div>
+
+  <p id="result-count" class="text-muted" style="display:none"></p>
+  <div id="results-container"></div>
+</div>
+
+<script>
+let currentFilter = 'all';
+
+document.addEventListener('DOMContentLoaded', () => {
+  const params = new URLSearchParams(window.location.search);
+  const q = params.get('q');
+  const t = params.get('type') || 'all';
+  if (q) {
+    document.getElementById('search-input').value = q;
+    currentFilter = t;
+    updateFilterButtons();
+    performSearch(q, t);
+  }
+
+  document.getElementById('search-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') doSearch();
+  });
+});
+
+function setFilter(type) {
+  currentFilter = type;
+  updateFilterButtons();
+  doSearch();
+}
+
+function updateFilterButtons() {
+  ['all', 'chat', 'composer'].forEach(t => {
+    const btn = document.getElementById('filter-' + t);
+    btn.className = t === currentFilter ? 'btn' : 'btn btn-outline';
+  });
+}
+
+function doSearch() {
+  const q = document.getElementById('search-input').value.trim();
+  if (!q) return;
+  const url = new URL(window.location);
+  url.searchParams.set('q', q);
+  url.searchParams.set('type', currentFilter);
+  window.history.pushState({}, '', url);
+  performSearch(q, currentFilter);
+}
+
+async function performSearch(query, type) {
+  const loading = document.getElementById('loading');
+  const countEl = document.getElementById('result-count');
+  const container = document.getElementById('results-container');
+  loading.style.display = 'flex';
+  countEl.style.display = 'none';
+  container.innerHTML = '';
+
+  try {
+    const res = await fetch(`/api/search?q=${encodeURIComponent(query)}&type=${type}`);
+    const data = await res.json();
+    const results = data.results || [];
+
+    loading.style.display = 'none';
+    countEl.style.display = 'block';
+    countEl.textContent = `Found ${results.length} results for "${query}"`;
+
+    let html = '';
+    for (const r of results) {
+      const badge = r.type === 'chat' ? '<span class="badge">Ask Log</span>' : '<span class="badge badge-secondary">Agent Log</span>';
+      const ts = formatDate(r.timestamp);
+      const snippet = escapeHtml((r.matchingText || '').slice(0, 300));
+      const folder = r.workspaceId === 'global'
+        ? '<span class="text-sm" style="color:var(--blue)">Global Storage</span>'
+        : (r.workspaceFolder ? `<span class="text-sm text-muted">${escapeHtml(r.workspaceFolder)}</span>` : '');
+      html += `<div class="card" style="margin-bottom:1rem;padding:1rem">
+        <div class="flex-between">
+          <div>
+            <a href="/workspace/${r.workspaceId}?tab=${r.chatId}&type=${r.type}" class="link text-lg">${escapeHtml(r.chatTitle)}</a>
+            <div class="text-sm text-muted">${ts}</div>
+          </div>
+          ${badge}
+        </div>
+        <div class="text-sm" style="margin-top:0.5rem">${snippet}</div>
+        ${folder ? '<div style="margin-top:0.5rem">' + folder + '</div>' : ''}
+      </div>`;
+    }
+    container.innerHTML = html;
+  } catch (e) {
+    loading.style.display = 'none';
+    container.innerHTML = '<p class="text-danger">Search failed.</p>';
+  }
+}
+</script>
+{% endblock %}
