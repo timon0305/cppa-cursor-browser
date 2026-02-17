@@ -727,7 +727,7 @@ def get_workspace_tabs(workspace_id):
                         if tc.get("status"):
                             display_text += f" ({tc['status']})"
                     if not display_text and thinking:
-                        display_text = thinking[:200] + ("..." if len(thinking) > 200 else "")
+                        display_text = thinking
 
                     # Build metadata for BOTH user and AI bubbles
                     bubble_meta = None

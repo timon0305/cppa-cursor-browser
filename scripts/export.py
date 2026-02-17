@@ -453,7 +453,7 @@ def main():
                 tool_calls = [{
                     "name": tfd.get("name"),
                     "params": tfd.get("params") if isinstance(tfd.get("params"), str) else tfd.get("rawArgs"),
-                    "result": (tfd.get("result") or "")[:500] if isinstance(tfd.get("result"), str) else None,
+                    "result": (tfd.get("result") or "") if isinstance(tfd.get("result"), str) else None,
                     "status": tfd.get("status"),
                 }]
 
@@ -473,7 +473,7 @@ def main():
         for d in code_block_diff_map.get(composer_id, []):
             bubbles.append({
                 "type": "ai",
-                "text": f"**Code edit:** {json.dumps(d)[:500]}",
+                "text": f"**Code edit:** {json.dumps(d)}",
                 "timestamp": to_epoch_ms(cd.get("lastUpdatedAt")) or to_epoch_ms(cd.get("createdAt")) or int(datetime.now().timestamp() * 1000),
             })
 
@@ -515,9 +515,15 @@ def main():
                         body += f" ({tc['status']})"
                     body += "\n"
                     if tc.get("params"):
-                        body += f"> Params: `{str(tc['params'])[:200]}`\n"
+                        body += f"> **INPUT:**\n> ```\n"
+                        for pline in str(tc['params']).split("\n"):
+                            body += f"> {pline}\n"
+                        body += f"> ```\n"
                     if tc.get("result"):
-                        body += f"> Result: `{str(tc['result'])[:200]}`\n"
+                        body += f"> **OUTPUT:**\n> ```\n"
+                        for rline in str(tc['result']).split("\n"):
+                            body += f"> {rline}\n"
+                        body += f"> ```\n"
                     body += "\n"
             body += "---\n\n"
 

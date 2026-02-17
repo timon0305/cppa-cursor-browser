@@ -115,7 +115,7 @@ function convertChatToMarkdown(tab, includeMetadata) {
         }
         if (tc.output) {
           md += '>\n> **OUTPUT:**\n> ```\n';
-          String(tc.output).split('\n').slice(0, 100).forEach(function(line) { md += '> ' + line + '\n'; });
+          String(tc.output).split('\n').forEach(function(line) { md += '> ' + line + '\n'; });
           md += '> ```\n';
         }
         md += '\n';
@@ -133,7 +133,7 @@ function convertChatToMarkdown(tab, includeMetadata) {
       if (Array.isArray(diff.newModelDiffWrtV0) && diff.newModelDiffWrtV0.length) {
         const lines = diff.newModelDiffWrtV0.flatMap(function(d) { return d.modified || []; });
         if (lines.length) {
-          md += '  ```\n  ' + lines.slice(0, 30).join('\n  ') + (lines.length > 30 ? '\n  ...' : '') + '\n  ```\n';
+          md += '  ```\n  ' + lines.join('\n  ') + '\n  ```\n';
         }
       }
       md += '\n';
@@ -232,13 +232,13 @@ async function downloadCSV(tab, fname) {
     'context_tokens_used','context_token_limit','context_pct_remaining',
     'response_time_ms','thinking_duration_ms','cost',
     'tool_name','tool_status','tool_summary','tool_input','tool_output',
-    'thinking_text_preview',
-    'timestamp','text_preview'
+    'thinking_text',
+    'timestamp','text'
   ];
   const rows = [headers];
   (tab.bubbles || []).forEach(function(b, i) {
     const bm = b.metadata || {};
-    const preview = (b.text || '').replace(/\r?\n/g, ' ').slice(0, 300);
+    const fullText = (b.text || '').replace(/\r?\n/g, ' ');
     const tc = (bm.toolCalls && bm.toolCalls[0]) || {};
     const thinkText = bm.thinking ? (typeof bm.thinking === 'string' ? bm.thinking : (bm.thinking.text || '')) : '';
     rows.push([
@@ -254,11 +254,11 @@ async function downloadCSV(tab, fname) {
       bm.thinkingDurationMs ? String(bm.thinkingDurationMs) : '',
       bm.cost != null ? String(bm.cost) : '',
       tc.name || '', tc.status || '', tc.summary || '',
-      (tc.input || '').replace(/\r?\n/g, ' ').slice(0, 500),
-      (tc.output || '').replace(/\r?\n/g, ' ').slice(0, 500),
-      thinkText.replace(/\r?\n/g, ' ').slice(0, 300),
+      (tc.input || '').replace(/\r?\n/g, ' '),
+      (tc.output || '').replace(/\r?\n/g, ' '),
+      thinkText.replace(/\r?\n/g, ' '),
       b.timestamp ? new Date(b.timestamp).toISOString() : '',
-      preview.replace(/"/g, '""')
+      fullText.replace(/"/g, '""')
     ]);
   });
   const csv = rows.map(function(r) { return r.map(function(c) { return '"' + String(c).replace(/"/g, '""') + '"'; }).join(','); }).join('\n');

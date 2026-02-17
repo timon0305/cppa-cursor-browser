@@ -39,7 +39,7 @@ def parse_tool_call(tfd: dict) -> dict:
         try:
             result_parsed = json.loads(result_raw)
         except Exception:
-            result_parsed = {"output": result_raw[:2000]}
+            result_parsed = {"output": result_raw}
 
     # Build human-readable summary and structured output based on tool name
     summary = ""
@@ -58,7 +58,7 @@ def parse_tool_call(tfd: dict) -> dict:
         summary = f"Read: {short_path(fp)}{range_str}"
         input_display = fp
         contents = result_parsed.get("contents") or ""
-        output_display = contents[:3000] if contents else ""
+        output_display = contents
 
     elif name == "edit_file_v2":
         fp = params_parsed.get("relativeWorkspacePath") or params_parsed.get("targetFile") or ""
@@ -70,14 +70,14 @@ def parse_tool_call(tfd: dict) -> dict:
             output_display = "File modified"
         streaming = params_parsed.get("streamingContent") or ""
         if streaming:
-            output_display = streaming[:3000]
+            output_display = streaming
 
     elif name == "run_terminal_command_v2":
         cmd = params_parsed.get("command") or ""
         summary = f"Terminal: {cmd[:80]}{'...' if len(cmd) > 80 else ''}"
         input_display = cmd
         output = result_parsed.get("output") or ""
-        output_display = output[:3000] if output else ""
+        output_display = output
 
     elif name == "ripgrep_raw_search":
         pattern = params_parsed.get("pattern") or ""
@@ -98,12 +98,12 @@ def parse_tool_call(tfd: dict) -> dict:
                                 if isinstance(match_data, dict):
                                     lines = match_data.get("lines") or match_data.get("content") or ""
                                     if lines:
-                                        all_content.append(str(lines)[:500])
-                output_display = "\n".join(all_content)[:3000] if all_content else "No matches"
+                                        all_content.append(str(lines))
+                output_display = "\n".join(all_content) if all_content else "No matches"
             else:
-                output_display = str(success)[:2000]
+                output_display = str(success)
         else:
-            output_display = str(result_parsed)[:2000]
+            output_display = str(result_parsed)
 
     elif name == "semantic_search_full":
         query = params_parsed.get("query") or ""
@@ -112,7 +112,7 @@ def parse_tool_call(tfd: dict) -> dict:
         code_results = result_parsed.get("codeResults", [])
         if isinstance(code_results, list):
             lines = []
-            for cr in code_results[:10]:
+            for cr in code_results:
                 if isinstance(cr, dict):
                     cb = cr.get("codeBlock", {})
                     if isinstance(cb, dict):
@@ -120,34 +120,34 @@ def parse_tool_call(tfd: dict) -> dict:
                         lines.append(f"# {fp}")
                         contents = cb.get("contents") or ""
                         if contents:
-                            lines.append(contents[:300])
-            output_display = "\n".join(lines)[:3000] if lines else "No results"
+                            lines.append(contents)
+            output_display = "\n".join(lines) if lines else "No results"
 
     elif name == "glob_file_search":
         pattern = params_parsed.get("pattern") or params_parsed.get("glob") or params_parsed.get("query") or ""
         summary = f"Glob: {pattern}" if pattern else "Glob search"
-        input_display = json.dumps(params_parsed, indent=2)[:500] if params_parsed else pattern
+        input_display = json.dumps(params_parsed, indent=2) if params_parsed else pattern
         files = result_parsed.get("files") or result_parsed.get("results") or []
         if isinstance(files, list):
-            output_display = "\n".join(str(f) for f in files[:50])
+            output_display = "\n".join(str(f) for f in files)
 
     elif name == "list_dir_v2":
         path = params_parsed.get("path") or params_parsed.get("relativeWorkspacePath") or ""
         summary = f"List dir: {short_path(path)}"
         input_display = path
-        output_display = str(result_parsed)[:2000]
+        output_display = str(result_parsed)
 
     elif name == "web_search":
         query = params_parsed.get("searchTerm") or params_parsed.get("query") or params_parsed.get("search_term") or ""
         summary = f"Web search: {query[:60]}" if query else "Web search"
         input_display = query
-        output_display = str(result_parsed)[:2000]
+        output_display = str(result_parsed)
 
     elif name == "web_fetch":
         url = params_parsed.get("url") or ""
         summary = f"Fetch: {url[:60]}"
         input_display = url
-        output_display = str(result_parsed)[:2000]
+        output_display = str(result_parsed)
 
     elif name == "todo_write":
         summary = "Todo write"
@@ -157,24 +157,24 @@ def parse_tool_call(tfd: dict) -> dict:
             for t in todos:
                 if isinstance(t, dict):
                     lines.append(f"[{t.get('status', '?')}] {t.get('content', '')}")
-            output_display = "\n".join(lines)[:2000]
+            output_display = "\n".join(lines)
 
     elif name == "task_v2":
         desc = params_parsed.get("description") or ""
         summary = f"Task: {desc[:60]}"
         input_display = desc
-        output_display = str(result_parsed)[:2000]
+        output_display = str(result_parsed)
 
     elif name == "read_lints":
         path = params_parsed.get("path") or ""
         summary = f"Read lints: {short_path(path)}"
-        output_display = str(result_parsed)[:2000]
+        output_display = str(result_parsed)
 
     else:
-        # Generic fallback
+        # Generic fallback — preserve full content for all tool types
         summary = f"{name}"
-        input_display = json.dumps(params_parsed, indent=2)[:1000] if params_parsed else ""
-        output_display = json.dumps(result_parsed, indent=2)[:2000] if result_parsed else ""
+        input_display = json.dumps(params_parsed, indent=2) if params_parsed else ""
+        output_display = json.dumps(result_parsed, indent=2) if result_parsed else ""
 
     return {
         "name": name,

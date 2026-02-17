@@ -18,6 +18,29 @@ Inspired by [cursor-chat-browser](https://github.com/thomas-pedersen/cursor-chat
 - Bookmarkable chat URLs
 - Automatic workspace path detection
 
+## Samples
+
+This repo includes a real exported conversation and a few screenshots so you can quickly see what the Projects list, Search, conversation view, and one-click export look like.
+
+- **Example chat export (Markdown)**: [`samples/example_chat_export.md`](samples/example_chat_export.md) (includes YAML frontmatter + transcript, with tool calls / thinking blocks when present)
+
+<details>
+<summary>Screenshots (Web UI)</summary>
+
+_Projects list (home):_
+![Projects list (home)](samples/home.png)
+
+_Search across chats and logs:_
+![Search](samples/search.png)
+
+_Conversation view (chat transcript + metadata):_
+![Conversation view](samples/chat.png)
+
+_One-click export from the UI:_
+![Export](samples/export.png)
+
+</details>
+
 ## Prerequisites
 
 - Python 3.10+

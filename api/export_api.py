@@ -327,7 +327,7 @@ def export_chats():
                             md += f"> ```\n"
                         if t.get("output"):
                             md += f">\n> **OUTPUT:**\n> ```\n"
-                            for oline in str(t["output"]).split("\n")[:100]:
+                            for oline in str(t["output"]).split("\n"):
                                 md += f"> {oline}\n"
                             md += f"> ```\n"
                         md += "\n"
