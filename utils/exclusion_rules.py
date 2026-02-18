@@ -159,8 +159,10 @@ def _rule_matches(tokens: list, text: str) -> bool:
     for clause in clauses:
         if not clause:
             continue
-        # Clause matches when every term in it matches (implicit AND)
-        if all(_term_matches(term, text) for term in clause if isinstance(term, tuple)):
+        # Clause matches when every term in it matches (implicit AND).
+        # Collect tuple terms first to avoid all([]) == True on an empty sequence.
+        terms = [t for t in clause if isinstance(t, tuple)]
+        if terms and all(_term_matches(term, text) for term in terms):
             return True
     return False
 

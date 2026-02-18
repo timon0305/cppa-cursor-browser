@@ -102,8 +102,10 @@ def export_chats():
         conn.row_factory = sqlite3.Row
 
         # Build workspace mapping
+        from urllib.parse import unquote as _url_unquote
         workspace_entries = []
         ws_id_to_slug = {}
+        ws_id_to_display_name = {}  # human-readable, URL-decoded folder name
         for name in os.listdir(workspace_path):
             full = os.path.join(workspace_path, name)
             wj = os.path.join(full, "workspace.json")
@@ -117,6 +119,7 @@ def export_chats():
                         fn = first_folder.replace("\\", "/").split("/")[-1]
                         if fn:
                             ws_id_to_slug[name] = _slug(fn)
+                            ws_id_to_display_name[name] = _url_unquote(fn)
                 except Exception:
                     pass
 
@@ -179,12 +182,13 @@ def export_chats():
 
                 ws_id = composer_id_to_ws.get(composer_id, "global")
                 ws_slug = "other-chats" if ws_id == "global" else (ws_id_to_slug.get(ws_id) or _slug(ws_id[:12]))
+                ws_display_name = "Other chats" if ws_id == "global" else (ws_id_to_display_name.get(ws_id) or ws_slug)
                 title = cd.get("name") or f"Chat {composer_id[:8]}"
                 model_config = cd.get("modelConfig") or {}
                 model_name = model_config.get("modelName")
                 model_names = [model_name] if model_name and model_name != "default" else None
                 searchable = build_searchable_text(
-                    project_name=ws_slug,
+                    project_name=ws_display_name,
                     chat_title=title,
                     model_names=model_names,
                 )

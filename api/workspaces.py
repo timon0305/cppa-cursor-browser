@@ -456,7 +456,10 @@ def list_workspaces():
         # Global (unmatched) conversations; apply exclusion rules
         global_convos = [
             c for c in conversation_map.get("global", [])
-            if not is_excluded_by_rules(rules, c.get("name") or "")
+            if not is_excluded_by_rules(
+                rules,
+                build_searchable_text(project_name="Other chats", chat_title=c.get("name")),
+            )
         ]
         if global_convos:
             last_updated = max((c.get("lastUpdatedAt") or 0 for c in global_convos), default=0)

@@ -82,13 +82,15 @@ class TestExclusionMatching(unittest.TestCase):
         self.assertFalse(is_excluded_by_rules(rules, "bar only"))
 
     def test_and_precedence_over_or(self):
-        # a OR b AND c  =>  (a) OR (b AND c)
-        rules = [[("word", "a"), "OR", ("word", "b"), "AND", ("word", "c")]]
-        self.assertTrue(is_excluded_by_rules(rules, "a"))
-        self.assertFalse(is_excluded_by_rules(rules, "b"))
-        self.assertFalse(is_excluded_by_rules(rules, "c"))
-        self.assertTrue(is_excluded_by_rules(rules, "b and c"))
-        self.assertTrue(is_excluded_by_rules(rules, "a or b"))
+        # xx OR yy AND zz  =>  (xx) OR (yy AND zz)
+        # Uses multi-character non-overlapping tokens to avoid substring false-positives
+        # (e.g. single-letter "a" would falsely match inside the word "and").
+        rules = [[("word", "xx"), "OR", ("word", "yy"), "AND", ("word", "zz")]]
+        self.assertTrue(is_excluded_by_rules(rules, "xx"))        # first OR clause matches
+        self.assertFalse(is_excluded_by_rules(rules, "yy"))       # second clause needs both yy AND zz
+        self.assertFalse(is_excluded_by_rules(rules, "zz"))       # second clause needs both yy AND zz
+        self.assertTrue(is_excluded_by_rules(rules, "yy and zz")) # second clause matches
+        self.assertTrue(is_excluded_by_rules(rules, "xx or yy"))  # first clause matches via xx
 
     def test_any_rule_matches(self):
         rules = [

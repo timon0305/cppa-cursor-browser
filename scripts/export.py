@@ -14,6 +14,7 @@ import sys
 import zipfile
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import unquote as _url_unquote
 
 # Ensure project root is on path when run as python scripts/export.py
 _project_root = Path(__file__).resolve().parent.parent
@@ -272,11 +273,10 @@ def main():
                 wd = json.load(f)
             first_folder = wd.get("folder") or (wd.get("folders", [{}])[0] or {}).get("path")
             if first_folder:
-                from urllib.parse import unquote as _unquote
                 fn = re.sub(r"^file://", "", first_folder).replace("\\", "/").split("/")[-1]
                 if fn:
                     workspace_id_to_slug[e["name"]] = slug(fn)
-                    workspace_id_to_display_name[e["name"]] = _unquote(fn)
+                    workspace_id_to_display_name[e["name"]] = _url_unquote(fn)
             for folder in get_workspace_folder_paths(wd):
                 norm = normalize_file_path(folder)
                 workspace_path_to_id[norm] = e["name"]
