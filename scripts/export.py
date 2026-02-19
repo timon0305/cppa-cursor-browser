@@ -7,6 +7,7 @@ Env: WORKSPACE_PATH for Cursor workspaceStorage path.
 """
 
 import json
+import logging
 import os
 import re
 import sqlite3
@@ -28,6 +29,8 @@ from utils.exclusion_rules import (
     is_excluded_by_rules,
 )
 from utils.path_helpers import get_workspace_folder_paths as _shared_get_workspace_folder_paths
+
+_logger = logging.getLogger(__name__)
 
 
 def _json_dump_safe(value) -> str:
@@ -54,10 +57,10 @@ def _load_manifest_entries(manifest_path: str) -> dict:
                     log_id = entry.get("log_id")
                     if log_id:
                         existing[log_id] = entry
-                except Exception:
-                    pass
-    except Exception:
-        pass
+                except Exception as e:
+                    _logger.debug("Skipping malformed manifest line in %s: %s", manifest_path, e)
+    except Exception as e:
+        _logger.debug("Failed to read manifest %s: %s", manifest_path, e)
     return existing
 
 
@@ -304,8 +307,8 @@ def main():
             with open(e["workspaceJsonPath"], "r", encoding="utf-8") as f:
                 wd = json.load(f)
             folders = get_workspace_folder_paths(wd)
-            first_folder = wd.get("folder") or (folders[0] if folders else None)
-            if first_folder:
+            first_folder = folders[0] if folders else None
+            if isinstance(first_folder, str) and first_folder:
                 fn = re.sub(r"^file://", "", first_folder).replace("\\", "/").split("/")[-1]
                 if fn:
                     workspace_id_to_slug[e["name"]] = slug(fn)
@@ -484,7 +487,8 @@ def main():
         model_names = [model_name] if model_name and model_name != "default" else None
 
         # Build broad text for exclusion checks so any visible output term can match.
-        # Includes user/assistant bubble text plus raw metadata that can surface in exports.
+        # CLI export intentionally includes metadata/tool payload text in addition to
+        # bubble text because these fields are emitted into exported markdown.
         bubble_texts = []
         bubble_meta_parts = []
         for h in headers:
