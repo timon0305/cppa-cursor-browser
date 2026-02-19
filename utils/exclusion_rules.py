@@ -187,8 +187,13 @@ def load_rules(path: str | None) -> list[list]:
                 tokens = _tokenize_rule(line)
                 if tokens:
                     rules.append(tokens)
-    except Exception:
-        _logger.warning("Failed to read exclusion rules from %s", path, exc_info=True)
+    except (OSError, UnicodeDecodeError) as e:
+        _logger.warning(
+            "Failed to read exclusion rules from %s (%s)",
+            path,
+            e.__class__.__name__,
+            exc_info=True,
+        )
         return []
     return rules
 

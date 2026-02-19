@@ -187,10 +187,19 @@ def export_chats():
                 model_config = cd.get("modelConfig") or {}
                 model_name = model_config.get("modelName")
                 model_names = [model_name] if model_name and model_name != "default" else None
+                bubble_texts = []
+                for h in headers:
+                    b = bubble_map.get(h.get("bubbleId"))
+                    if not b:
+                        continue
+                    bt = extract_text_from_bubble(b)
+                    if bt:
+                        bubble_texts.append(bt)
                 searchable = build_searchable_text(
                     project_name=ws_display_name,
                     chat_title=title,
                     model_names=model_names,
+                    chat_content_snippet="\n\n".join(bubble_texts) if bubble_texts else None,
                 )
                 if is_excluded_by_rules(rules, searchable):
                     continue

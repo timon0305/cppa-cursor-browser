@@ -28,7 +28,6 @@ def expand_tilde_path(input_path: str) -> str:
 def normalize_file_path(file_path: str) -> str:
     """Normalize a file path: strip file:// protocol, URL-decode, fix slashes."""
     import re
-    from urllib.parse import unquote
 
     normalized = file_path
     # Remove file:// protocol

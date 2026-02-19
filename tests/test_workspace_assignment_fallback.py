@@ -5,6 +5,7 @@ Tests for conversation-to-workspace assignment fallback behavior.
 import unittest
 
 from api.workspaces import _determine_project_for_conversation
+from utils.path_helpers import normalize_file_path
 
 
 class TestWorkspaceAssignmentFallback(unittest.TestCase):
@@ -15,9 +16,9 @@ class TestWorkspaceAssignmentFallback(unittest.TestCase):
             "codeBlockData": {},
         }
         composer_id = "cmp-123"
-        project_layouts_map = {"cmp-123": ["/d%3A/_Cpp_Digest/boostbacklog"]}
+        project_layouts_map = {"cmp-123": [normalize_file_path("/d%3A/_Cpp_Digest/boostbacklog")]}
         project_name_to_workspace_id = {"boostbacklog": "good-ws"}
-        workspace_path_to_id = {"d:\\_cpp_digest\\boostbacklog": "good-ws"}
+        workspace_path_to_id = {normalize_file_path("d:\\_cpp_digest\\boostbacklog"): "good-ws"}
         workspace_entries = []
         bubble_map = {}
         composer_id_to_workspace_id = {"cmp-123": "broken-ws"}

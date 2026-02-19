@@ -205,7 +205,7 @@ class TestSearchExclusionFiltering(unittest.TestCase):
         self._set_rules("kwd\n")
 
         results_lower = self._search("kwd", "all")
-        results_upper = self._search("kwd", "all")
+        results_upper = self._search("KWD", "all")
 
         self.assertEqual(results_lower, [])
         self.assertEqual(results_upper, [])

@@ -6,6 +6,7 @@ import json
 import unittest
 
 from api.workspaces import _infer_invalid_workspace_aliases
+from utils.path_helpers import normalize_file_path
 
 
 class TestInvalidWorkspaceAliases(unittest.TestCase):
@@ -23,13 +24,13 @@ class TestInvalidWorkspaceAliases(unittest.TestCase):
 
         # Drive inference through project_layouts_map -> workspace_path_map
         project_layouts_map = {
-            "cid-1": [r"d:\_Cpp_Digest\boostbacklog"],
-            "cid-2": [r"d:\_Cpp_Digest\boostbacklog"],
-            "cid-3": [r"d:\_Cpp_Digest\team-brain"],
+            "cid-1": [normalize_file_path(r"d:\_Cpp_Digest\boostbacklog")],
+            "cid-2": [normalize_file_path(r"d:\_Cpp_Digest\boostbacklog")],
+            "cid-3": [normalize_file_path(r"d:\_Cpp_Digest\team-brain")],
         }
         workspace_path_map = {
-            r"d:\_cpp_digest\boostbacklog": "boost-ws",
-            r"d:\_cpp_digest\team-brain": "team-ws",
+            normalize_file_path(r"d:\_cpp_digest\boostbacklog"): "boost-ws",
+            normalize_file_path(r"d:\_cpp_digest\team-brain"): "team-ws",
         }
 
         aliases = _infer_invalid_workspace_aliases(
