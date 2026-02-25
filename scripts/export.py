@@ -29,6 +29,7 @@ from utils.exclusion_rules import (
     is_excluded_by_rules,
 )
 from utils.path_helpers import get_workspace_folder_paths as _shared_get_workspace_folder_paths
+from utils.tool_parser import parse_tool_call
 
 _logger = logging.getLogger(__name__)
 
@@ -524,7 +525,7 @@ def main():
         rel_dir = os.path.join(today, ws_slug, "chat")
         out_path = os.path.join(out_dir, rel_dir, filename)
 
-        # Build bubbles
+        # Build bubbles with full metadata
         bubbles = []
         for h in headers:
             b = bubble_map.get(h.get("bubbleId"))
@@ -540,26 +541,38 @@ def main():
 
             btype = "user" if h.get("type") == 1 else "ai"
 
-            tool_calls = None
-            if has_tool:
-                tfd = b["toolFormerData"]
-                tool_calls = [{
-                    "name": tfd.get("name"),
-                    "params": tfd.get("params") if isinstance(tfd.get("params"), str) else tfd.get("rawArgs"),
-                    "result": (tfd.get("result") or "") if isinstance(tfd.get("result"), str) else None,
-                    "status": tfd.get("status"),
-                }]
-
             thinking = None
+            thinking_duration_ms = None
             if b.get("thinking"):
-                thinking = b["thinking"] if isinstance(b["thinking"], str) else (b["thinking"].get("text") if isinstance(b["thinking"], dict) else None)
+                thinking = b["thinking"] if isinstance(b["thinking"], str) else (
+                    b["thinking"].get("text") if isinstance(b["thinking"], dict) else None
+                )
+                thinking_duration_ms = b.get("thinkingDurationMs")
+
+            tool_info = None
+            if has_tool:
+                tool_info = parse_tool_call(b["toolFormerData"])
+
+            model_info = (b.get("modelInfo") or {}).get("modelName")
+            if model_info == "default":
+                model_info = None
+
+            ctx_window = b.get("contextWindowStatusAtCreation") or {}
+            ctx_tokens_used = ctx_window.get("tokensUsed", 0)
+            ctx_token_limit = ctx_window.get("tokenLimit", 0)
+            ctx_pct_remaining = ctx_window.get("percentageRemainingFloat") or ctx_window.get("percentageRemaining")
 
             bubbles.append({
                 "type": btype,
                 "text": text,
                 "timestamp": to_epoch_ms(b.get("createdAt")) or to_epoch_ms(b.get("timestamp")) or int(datetime.now().timestamp() * 1000),
-                "toolCalls": tool_calls,
+                "tool": tool_info,
                 "thinking": thinking,
+                "thinkingDurationMs": thinking_duration_ms,
+                "model": model_info,
+                "contextTokensUsed": ctx_tokens_used if ctx_tokens_used > 0 else None,
+                "contextTokenLimit": ctx_token_limit if ctx_token_limit > 0 else None,
+                "contextPctRemaining": round(ctx_pct_remaining, 1) if ctx_pct_remaining else None,
             })
 
         # Code block diffs
@@ -570,67 +583,211 @@ def main():
                 "timestamp": to_epoch_ms(cd.get("lastUpdatedAt")) or to_epoch_ms(cd.get("createdAt")) or int(datetime.now().timestamp() * 1000),
             })
 
-        bubbles.sort(key=lambda b: b.get("timestamp") or 0)
+        bubbles.sort(key=lambda bub: bub.get("timestamp") or 0)
+
+        # Compute per-assistant-bubble response times
+        last_user_ts = None
+        for bub in bubbles:
+            if bub["type"] == "user":
+                last_user_ts = bub.get("timestamp")
+            elif bub["type"] == "ai" and last_user_ts:
+                bts = bub.get("timestamp")
+                if bts and bts > last_user_ts:
+                    bub["responseTimeMs"] = bts - last_user_ts
+
+        # Session-level aggregates
+        total_response_ms = sum(bub.get("responseTimeMs", 0) for bub in bubbles)
+        total_thinking_ms = sum(bub.get("thinkingDurationMs", 0) or 0 for bub in bubbles)
+        total_tool_calls = sum(1 for bub in bubbles if bub.get("tool"))
+        max_ctx_used = max((bub.get("contextTokensUsed") or 0) for bub in bubbles) if bubbles else 0
+        ctx_limit = max((bub.get("contextTokenLimit") or 0) for bub in bubbles) if bubbles else 0
+
+        tool_breakdown = {}
+        for bub in bubbles:
+            if bub.get("tool"):
+                tn = bub["tool"].get("name", "unknown")
+                tool_breakdown[tn] = tool_breakdown.get(tn, 0) + 1
+
+        lines_added = cd.get("totalLinesAdded", 0)
+        lines_removed = cd.get("totalLinesRemoved", 0)
+
+        # Wall-clock duration from bubble timestamps
+        ts_vals = [bub["timestamp"] for bub in bubbles if bub.get("timestamp")]
+        wall_clock_sec = int((max(ts_vals) - min(ts_vals)) / 1000) if len(ts_vals) >= 2 else None
+
+        # Collect file/command activity and tool result stats from tool calls
+        files_read_list = []
+        files_written_list = []
+        commands_run_list = []
+        tool_result_stats = {
+            "terminal_success": 0, "terminal_error": 0,
+            "file_reads": 0, "file_edits": 0,
+            "searches": 0, "web": 0,
+        }
+        for bub in bubbles:
+            if not bub.get("tool"):
+                continue
+            t = bub["tool"]
+            tn = t.get("name", "")
+            status = t.get("status") or ""
+            raw_input = str(t.get("input") or "").strip()
+            first_line = raw_input.split("\n")[0] if raw_input else ""
+            if tn == "read_file_v2" and first_line:
+                files_read_list.append(first_line)
+                tool_result_stats["file_reads"] += 1
+            elif tn == "edit_file_v2" and first_line:
+                files_written_list.append(first_line)
+                tool_result_stats["file_edits"] += 1
+            elif tn == "run_terminal_command_v2" and raw_input:
+                commands_run_list.append(raw_input)
+                if status == "completed":
+                    tool_result_stats["terminal_success"] += 1
+                elif status in ("error", "failed"):
+                    tool_result_stats["terminal_error"] += 1
+                else:
+                    tool_result_stats["terminal_success"] += 1
+            elif tn in ("ripgrep_raw_search", "glob_file_search", "semantic_search_full"):
+                tool_result_stats["searches"] += 1
+            elif tn in ("web_search", "web_fetch"):
+                tool_result_stats["web"] += 1
 
         # Frontmatter
-        fm = {
-            "log_id": composer_id,
-            "log_type": "chat",
-            "title": title,
-            "created_at": datetime.fromtimestamp((to_epoch_ms(cd.get("createdAt")) or ts) / 1000).isoformat(),
-            "updated_at": datetime.fromtimestamp(updated_at / 1000).isoformat() if updated_at else datetime.now().isoformat(),
-            "workspace_id": ws_id,
-            "workspace_path": None if ws_id == "global" else ws_id,
-            "storage_kind": "global",
-            "message_count": len(bubbles),
-        }
-        total_tc = sum(len(b.get("toolCalls") or []) for b in bubbles)
-        total_think = sum(1 for b in bubbles if b.get("thinking"))
-        if total_tc:
-            fm["tool_calls_count"] = total_tc
+        created_ms = to_epoch_ms(cd.get("createdAt")) or ts
+        fm_lines = ["---"]
+        fm_lines.append(f"log_id: {composer_id}")
+        fm_lines.append(f"log_type: chat")
+        fm_lines.append(f'title: "{title.replace(chr(34), chr(92)+chr(34))}"')
+        fm_lines.append(f"created_at: {datetime.fromtimestamp(created_ms / 1000).isoformat()}")
+        fm_lines.append(f"updated_at: {datetime.fromtimestamp(updated_at / 1000).isoformat() if updated_at else datetime.now().isoformat()}")
+        fm_lines.append(f"workspace: {ws_slug}")
+        fm_lines.append(f'workspace_name: "{ws_display_name}"')
+        if model_name and model_name != "default":
+            fm_lines.append(f"model: {model_name}")
+        fm_lines.append(f"message_count: {len(bubbles)}")
+        if total_tool_calls:
+            fm_lines.append(f"total_tool_calls: {total_tool_calls}")
+        if tool_breakdown:
+            fm_lines.append("tool_call_breakdown:")
+            for tn, cnt in sorted(tool_breakdown.items(), key=lambda x: -x[1]):
+                fm_lines.append(f"  {tn}: {cnt}")
+        total_think = sum(1 for bub in bubbles if bub.get("thinking"))
         if total_think:
-            fm["thinking_count"] = total_think
+            fm_lines.append(f"thinking_count: {total_think}")
+        if wall_clock_sec is not None:
+            fm_lines.append(f"wall_clock_seconds: {wall_clock_sec}")
+        if total_response_ms:
+            fm_lines.append(f"total_response_time_sec: {total_response_ms / 1000:.1f}")
+        if total_thinking_ms:
+            fm_lines.append(f"total_thinking_time_sec: {total_thinking_ms / 1000:.1f}")
+        if max_ctx_used and ctx_limit:
+            fm_lines.append(f"max_context_tokens_used: {max_ctx_used}")
+            fm_lines.append(f"context_token_limit: {ctx_limit}")
+        if lines_added or lines_removed:
+            fm_lines.append(f"lines_added: {lines_added}")
+            fm_lines.append(f"lines_removed: {lines_removed}")
+        if files_read_list or files_written_list:
+            fm_lines.append(f"files_read: {len(files_read_list)}")
+            fm_lines.append(f"files_written: {len(files_written_list)}")
+        if commands_run_list:
+            fm_lines.append(f"commands_run: {len(commands_run_list)}")
+        fm_lines.append("---")
+        fm_str = "\n".join(fm_lines) + "\n\n"
+
+        # Header
+        header = f"# {title}\n\n"
+        meta_parts = []
+        if created_ms:
+            meta_parts.append(f"Created: {datetime.fromtimestamp(created_ms / 1000).strftime('%Y-%m-%d %H:%M:%S')}")
+        if model_name and model_name != "default":
+            meta_parts.append(f"Model: {model_name}")
+        if total_tool_calls:
+            meta_parts.append(f"Tool calls: {total_tool_calls}")
+        if wall_clock_sec is not None:
+            hrs, rem = divmod(wall_clock_sec, 3600)
+            mins, secs = divmod(rem, 60)
+            dur = f"{hrs}h {mins}m" if hrs else (f"{mins}m {secs}s" if mins else f"{secs}s")
+            meta_parts.append(f"Duration: {dur}")
+        header += f"_{' | '.join(meta_parts)}_\n\n---\n\n" if meta_parts else "---\n\n"
+
+        # Session summary block
+        summary = ""
+        if files_read_list or files_written_list or commands_run_list:
+            summary += "## Session Summary\n\n"
+            if files_written_list or files_read_list:
+                summary += "### Files Touched\n\n"
+                summary += "| Action | File |\n|--------|------|\n"
+                for fp in files_written_list:
+                    summary += f"| Edit | `{fp}` |\n"
+                for fp in files_read_list:
+                    summary += f"| Read | `{fp}` |\n"
+                summary += "\n"
+            if commands_run_list:
+                summary += "### Commands Run\n\n"
+                for i, cmd in enumerate(commands_run_list, 1):
+                    summary += f"{i}. `{cmd}`\n"
+                summary += "\n"
+            non_zero = {k: v for k, v in tool_result_stats.items() if v > 0}
+            if non_zero:
+                summary += "### Tool Results\n\n"
+                labels = {
+                    "terminal_success": "Terminal Success",
+                    "terminal_error": "Terminal Error",
+                    "file_reads": "File Reads",
+                    "file_edits": "File Edits",
+                    "searches": "Searches",
+                    "web": "Web Fetches",
+                }
+                for k, v in non_zero.items():
+                    summary += f"- {labels.get(k, k)}: {v}\n"
+                summary += "\n"
+            summary += "---\n\n"
 
         # Body
         body = ""
-        for bubble in bubbles:
-            role = "user" if bubble["type"] == "user" else "assistant"
+        for bub in bubbles:
+            role = "User" if bub["type"] == "user" else "Assistant"
             body += f"### {role}\n\n"
-            if bubble.get("timestamp"):
-                body += f"_{datetime.fromtimestamp(bubble['timestamp'] / 1000).isoformat()}_\n\n"
-            if bubble.get("thinking"):
-                body += f"<details><summary>Thinking</summary>\n\n{bubble['thinking']}\n\n</details>\n\n"
-            body += bubble["text"] + "\n\n"
-            if bubble.get("toolCalls"):
-                for tc in bubble["toolCalls"]:
-                    body += f"> **Tool: {tc.get('name', 'unknown')}**"
-                    if tc.get("status"):
-                        body += f" ({tc['status']})"
-                    body += "\n"
-                    if tc.get("params"):
-                        body += f"> **INPUT:**\n> ```\n"
-                        for pline in str(tc['params']).split("\n"):
-                            body += f"> {pline}\n"
-                        body += f"> ```\n"
-                    if tc.get("result"):
-                        body += f"> **OUTPUT:**\n> ```\n"
-                        for rline in str(tc['result']).split("\n"):
-                            body += f"> {rline}\n"
-                        body += f"> ```\n"
-                    body += "\n"
+            # Per-message metadata line
+            meta_parts = []
+            if bub.get("model"):
+                meta_parts.append(f"Model: {bub['model']}")
+            if bub.get("responseTimeMs"):
+                meta_parts.append(f"Response: {bub['responseTimeMs'] / 1000:.1f}s")
+            if bub.get("thinkingDurationMs"):
+                meta_parts.append(f"Thinking: {bub['thinkingDurationMs'] / 1000:.1f}s")
+            if bub.get("contextTokensUsed") and bub.get("contextTokenLimit"):
+                pct = bub["contextTokensUsed"] / bub["contextTokenLimit"] * 100
+                meta_parts.append(f"Context: {bub['contextTokensUsed']:,} / {bub['contextTokenLimit']:,} tokens ({pct:.0f}% used)")
+            elif bub.get("contextPctRemaining") is not None:
+                meta_parts.append(f"Context: {bub['contextPctRemaining']}% remaining")
+            if meta_parts:
+                body += f"_{' | '.join(meta_parts)}_\n\n"
+            if bub.get("timestamp"):
+                body += f"_{datetime.fromtimestamp(bub['timestamp'] / 1000).isoformat()}_\n\n"
+            if bub.get("thinking"):
+                dur_str = f" ({bub['thinkingDurationMs'] / 1000:.1f}s)" if bub.get("thinkingDurationMs") else ""
+                body += f"<details><summary>Thinking{dur_str}</summary>\n\n{bub['thinking']}\n\n</details>\n\n"
+            body += bub["text"] + "\n\n"
+            if bub.get("tool"):
+                t = bub["tool"]
+                tool_summary = t.get("summary") or t.get("name") or "unknown"
+                tool_status = t.get("status") or ""
+                status_str = f" ({tool_status})" if tool_status else ""
+                body += f"> **Tool: {tool_summary}**{status_str}\n"
+                if t.get("input"):
+                    body += "> **INPUT:**\n> ```\n"
+                    for iline in str(t["input"]).split("\n"):
+                        body += f"> {iline}\n"
+                    body += "> ```\n"
+                if t.get("output"):
+                    body += "> **OUTPUT:**\n> ```\n"
+                    for oline in str(t["output"]).split("\n"):
+                        body += f"> {oline}\n"
+                    body += "> ```\n"
+                body += "\n"
             body += "---\n\n"
 
-        # Assemble markdown
-        fm_str = "---\n"
-        for k, v in fm.items():
-            if v is None:
-                fm_str += f"{k}: null\n"
-            elif isinstance(v, dict):
-                fm_str += f"{k}: {json.dumps(v)}\n"
-            else:
-                fm_str += f"{k}: {v}\n"
-        fm_str += "---\n\n"
-        md = fm_str + body
+        md = fm_str + header + summary + body
 
         rel_path = os.path.join(today, ws_slug, "chat", filename)
         exported.append({"id": composer_id, "rel_path": rel_path, "content": md,
