@@ -252,6 +252,12 @@ def export_chats():
                     ctx_token_limit = ctx_window.get("tokenLimit", 0)
                     ctx_pct_remaining = ctx_window.get("percentageRemainingFloat") or ctx_window.get("percentageRemaining")
 
+                    # Token counts (AI bubbles only)
+                    tc_dict = (b.get("tokenCount") or {}) if btype == "assistant" else {}
+                    in_tok = tc_dict.get("inputTokens") or 0
+                    out_tok = tc_dict.get("outputTokens") or 0
+                    cached_tok = tc_dict.get("cachedTokens") or 0
+
                     bubbles.append({
                         "type": btype,
                         "text": text,
@@ -263,6 +269,9 @@ def export_chats():
                         "contextTokensUsed": ctx_tokens_used if ctx_tokens_used > 0 else None,
                         "contextTokenLimit": ctx_token_limit if ctx_token_limit > 0 else None,
                         "contextPctRemaining": round(ctx_pct_remaining, 1) if ctx_pct_remaining else None,
+                        "inputTokens": in_tok if in_tok > 0 else None,
+                        "outputTokens": out_tok if out_tok > 0 else None,
+                        "cachedTokens": cached_tok if cached_tok > 0 else None,
                     })
 
                 bubbles.sort(key=lambda x: x["timestamp"] or 0)
@@ -287,6 +296,12 @@ def export_chats():
                 files_removed = cd.get("removedFiles", 0)
                 max_ctx_used = max((b_item.get("contextTokensUsed", 0) or 0) for b_item in bubbles) if bubbles else 0
                 ctx_limit = max((b_item.get("contextTokenLimit", 0) or 0) for b_item in bubbles) if bubbles else 0
+                total_input_tokens = sum(b_item.get("inputTokens") or 0 for b_item in bubbles)
+                total_output_tokens = sum(b_item.get("outputTokens") or 0 for b_item in bubbles)
+                total_cached_tokens = sum(b_item.get("cachedTokens") or 0 for b_item in bubbles)
+                usage_data = cd.get("usageData") or {}
+                total_cost_raw = usage_data.get("cost") or usage_data.get("estimatedCost")
+                total_cost = total_cost_raw if isinstance(total_cost_raw, (int, float)) and total_cost_raw > 0 else None
 
                 # Build frontmatter
                 created_ms = to_epoch_ms(cd.get("createdAt")) or ts_ms
@@ -296,9 +311,18 @@ def export_chats():
                 md += f"created_at: {datetime.fromtimestamp(created_ms / 1000).isoformat()}\n"
                 md += f"updated_at: {datetime.fromtimestamp(updated_at_ms / 1000).isoformat() if updated_at_ms else datetime.now().isoformat()}\n"
                 md += f"workspace: {ws_slug}\n"
+                md += f"workspace_name: {ws_display_name}\n"
                 md += f"message_count: {len(bubbles)}\n"
                 if model_name:
                     md += f"model: {model_name}\n"
+                if total_input_tokens:
+                    md += f"total_input_tokens: {total_input_tokens}\n"
+                if total_output_tokens:
+                    md += f"total_output_tokens: {total_output_tokens}\n"
+                if total_cached_tokens:
+                    md += f"total_cached_tokens: {total_cached_tokens}\n"
+                if total_cost:
+                    md += f"total_cost_usd: {total_cost:.6f}\n"
                 if total_response_ms:
                     md += f"total_response_time_sec: {total_response_ms / 1000:.1f}\n"
                 if total_thinking_ms:
@@ -326,6 +350,15 @@ def export_chats():
                     meta_parts = []
                     if bubble.get("model"):
                         meta_parts.append(f"Model: {bubble['model']}")
+                    if bubble.get("inputTokens") or bubble.get("outputTokens"):
+                        tok_parts = []
+                        if bubble.get("inputTokens"):
+                            tok_parts.append(f"In: {bubble['inputTokens']:,}")
+                        if bubble.get("outputTokens"):
+                            tok_parts.append(f"Out: {bubble['outputTokens']:,}")
+                        if bubble.get("cachedTokens"):
+                            tok_parts.append(f"Cached: {bubble['cachedTokens']:,}")
+                        meta_parts.append(" / ".join(tok_parts))
                     if bubble.get("responseTimeMs"):
                         meta_parts.append(f"Response: {bubble['responseTimeMs'] / 1000:.1f}s")
                     if bubble.get("thinkingDurationMs"):
