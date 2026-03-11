@@ -840,7 +840,15 @@ def main():
             created_ms: int = meta.get("createdAt") or int(datetime.now().timestamp() * 1000)
             session_name = meta.get("name") or f"Session {session_id[:8]}"
 
-            if since == "last" and created_ms <= last_export:
+            # Use the store.db mtime as a proxy for "last updated" — createdAt
+            # is immutable and would cause sessions with new turns to be skipped.
+            try:
+                db_mtime_ms = int(os.path.getmtime(session["db_path"]) * 1000)
+            except OSError:
+                db_mtime_ms = created_ms
+            updated_ms = max(created_ms, db_mtime_ms)
+
+            if since == "last" and updated_ms <= last_export:
                 continue
 
             try:
@@ -866,10 +874,15 @@ def main():
                         break
 
             bubble_texts = [b["text"] for b in bubbles if b.get("text")]
+            tool_call_texts = [
+                tc.get("input", "") or tc.get("summary", "")
+                for b in bubbles
+                for tc in (b.get("metadata") or {}).get("toolCalls") or []
+            ]
             searchable = build_searchable_text(
                 project_name=ws_name,
                 chat_title=title,
-                chat_content_snippet="\n\n".join(bubble_texts[:5]),
+                chat_content_snippet="\n\n".join(bubble_texts + tool_call_texts),
             )
             if is_excluded_by_rules(exclusion_rules, searchable):
                 continue
@@ -890,27 +903,27 @@ def main():
             rel_dir = os.path.join(today, ws_slug_cli, "cli")
             out_path = os.path.join(out_dir, rel_dir, filename)
 
-            # Frontmatter
+            # Frontmatter — free-form scalars use json.dumps() for safe YAML quoting.
             fm_lines = ["---"]
-            fm_lines.append(f"log_id: {session_id}")
-            fm_lines.append(f"log_type: cli_agent")
-            fm_lines.append(f'title: "{title.replace(chr(34), chr(92)+chr(34))}"')
+            fm_lines.append(f"log_id: {json.dumps(session_id, ensure_ascii=False)}")
+            fm_lines.append("log_type: cli_agent")
+            fm_lines.append(f"title: {json.dumps(title, ensure_ascii=False)}")
             fm_lines.append(f"created_at: {datetime.fromtimestamp(created_ms / 1000).isoformat()}")
             fm_lines.append(f"workspace: {ws_slug_cli}")
-            fm_lines.append(f'workspace_name: "{ws_name}"')
+            fm_lines.append(f"workspace_name: {json.dumps(ws_name, ensure_ascii=False)}")
             if cp.get("workspace_path"):
-                fm_lines.append(f"workspace_path: {cp['workspace_path']}")
-            fm_lines.append(f"project_id: {cp['project_id']}")
-            fm_lines.append(f"session_id: {session_id}")
+                fm_lines.append(f"workspace_path: {json.dumps(cp['workspace_path'], ensure_ascii=False)}")
+            fm_lines.append(f"project_id: {json.dumps(cp['project_id'], ensure_ascii=False)}")
+            fm_lines.append(f"session_id: {json.dumps(session_id, ensure_ascii=False)}")
             if meta.get("mode"):
-                fm_lines.append(f"mode: {meta['mode']}")
+                fm_lines.append(f"mode: {json.dumps(meta['mode'], ensure_ascii=False)}")
             fm_lines.append(f"message_count: {len(bubbles)}")
             if total_tool_calls:
                 fm_lines.append(f"total_tool_calls: {total_tool_calls}")
             if tool_breakdown:
                 fm_lines.append("tool_call_breakdown:")
                 for tn, cnt in sorted(tool_breakdown.items(), key=lambda x: -x[1]):
-                    fm_lines.append(f"  {tn}: {cnt}")
+                    fm_lines.append(f"  {json.dumps(tn, ensure_ascii=False)}: {cnt}")
             fm_lines.append("---")
             fm_str = "\n".join(fm_lines) + "\n\n"
 
@@ -947,7 +960,7 @@ def main():
                 "rel_path": rel_path,
                 "content": md,
                 "out_path": out_path,
-                "updatedAt": created_ms,
+                "updatedAt": updated_ms,
             })
             count += 1
 

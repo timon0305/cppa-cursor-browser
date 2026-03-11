@@ -50,9 +50,13 @@ class TestCursorCliSessionToMarkdown(unittest.TestCase):
     def _simple_session(self, name: str = "My Session", mode: str = "agent") -> tuple[str, dict]:
         """Build a store.db with one user message and one assistant reply.
 
-        The root is a chain blob pointing to both message blobs so BFS reaches both.
+        Models the real CLI linked-list layout: root (latest chain node) references
+        the newest message (assistant) and a pointer to an older chain node which
+        holds the older message (user).  After traverse_blobs() reverses, callers
+        receive [user, assistant] in chronological order.
         """
-        root_id = "0" * 64
+        root_id = "0" * 64   # latest chain node
+        prev_id = "f" * 64   # older chain node
         blob_user = "a" * 64
         blob_asst = "b" * 64
         meta = {
@@ -67,9 +71,12 @@ class TestCursorCliSessionToMarkdown(unittest.TestCase):
         conn.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)")
         conn.execute("CREATE TABLE blobs (id TEXT PRIMARY KEY, data BLOB)")
         conn.execute("INSERT INTO meta VALUES ('0', ?)", (json.dumps(meta).encode("utf-8").hex(),))
-        # Chain blob pointing to both message blobs
-        chain_data = b"\x0a\x20" + bytes.fromhex(blob_user) + b"\x0a\x20" + bytes.fromhex(blob_asst)
-        conn.execute("INSERT INTO blobs VALUES (?, ?)", (root_id, chain_data))
+        # root -> [newest msg (asst), prev chain node]
+        root_chain = b"\x0a\x20" + bytes.fromhex(blob_asst) + b"\x0a\x20" + bytes.fromhex(prev_id)
+        conn.execute("INSERT INTO blobs VALUES (?, ?)", (root_id, root_chain))
+        # prev chain node -> [oldest msg (user)]
+        prev_chain = b"\x0a\x20" + bytes.fromhex(blob_user)
+        conn.execute("INSERT INTO blobs VALUES (?, ?)", (prev_id, prev_chain))
         conn.execute("INSERT INTO blobs VALUES (?, ?)", (
             blob_user, json.dumps({"role": "user", "content": "<user_query>Write a sort function</user_query>"}).encode("utf-8")
         ))
@@ -94,7 +101,7 @@ class TestCursorCliSessionToMarkdown(unittest.TestCase):
     def test_frontmatter_includes_session_id(self):
         db_path, _ = self._simple_session()
         result = cursor_cli_session_to_markdown(db_path)
-        self.assertIn("log_id: test-agent-id", result)
+        self.assertIn('log_id: "test-agent-id"', result)
 
     def test_frontmatter_includes_log_type(self):
         db_path, _ = self._simple_session()
@@ -104,7 +111,7 @@ class TestCursorCliSessionToMarkdown(unittest.TestCase):
     def test_frontmatter_includes_mode(self):
         db_path, _ = self._simple_session(mode="agent")
         result = cursor_cli_session_to_markdown(db_path)
-        self.assertIn("mode: agent", result)
+        self.assertIn('mode: "agent"', result)
 
     def test_frontmatter_title_from_session_name(self):
         db_path, _ = self._simple_session(name="My Custom Title")
@@ -183,7 +190,7 @@ class TestCursorCliSessionToMarkdown(unittest.TestCase):
         result = cursor_cli_session_to_markdown(db_path)
         self.assertIn("total_tool_calls: 2", result)
         self.assertIn("tool_call_breakdown:", result)
-        self.assertIn("Read: 2", result)
+        self.assertIn('"Read": 2', result)
 
     def test_with_session_meta_kwarg(self):
         """session_meta kwarg skips reading from the database."""
@@ -205,7 +212,7 @@ class TestCursorCliSessionToMarkdown(unittest.TestCase):
             "createdAt": 1_700_000_000_000,
         }
         result = cursor_cli_session_to_markdown(db_path, session_meta=provided_meta)
-        self.assertIn("mode: custom", result)
+        self.assertIn('mode: "custom"', result)
         self.assertIn("Provided Meta Session", result)
 
     def test_empty_session_produces_valid_markdown(self):
@@ -231,8 +238,8 @@ class TestCursorCliSessionToMarkdown(unittest.TestCase):
         db_path = self._db_path()
         _build_store_db(db_path, meta, json_blobs)
         result = cursor_cli_session_to_markdown(db_path)
-        # Frontmatter title line must be valid YAML (escaped quotes)
-        self.assertIn('title: "', result)
+        # Frontmatter title must have embedded quotes escaped as \"
+        self.assertIn('title: "He said \\"hello\\""', result)
 
 
 if __name__ == "__main__":

@@ -345,80 +345,81 @@ def search():
             pass
 
         # ---------------------------------------------------------------
-        # Search Cursor CLI sessions
+        # Search Cursor CLI sessions (only for type=all)
         # ---------------------------------------------------------------
-        try:
-            cli_projects = list_cli_projects(get_cli_chats_path())
-            for cp in cli_projects:
-                ws_name = cp["workspace_name"] or cp["project_id"][:12]
-                for session in cp["sessions"]:
-                    meta = session.get("meta", {})
-                    session_id = session["session_id"]
-                    created_ms: int = meta.get("createdAt") or int(datetime.now().timestamp() * 1000)
-                    session_name = meta.get("name") or f"Session {session_id[:8]}"
+        if search_type == "all":
+            try:
+                cli_projects = list_cli_projects(get_cli_chats_path())
+                for cp in cli_projects:
+                    ws_name = cp["workspace_name"] or cp["project_id"][:12]
+                    for session in cp["sessions"]:
+                        meta = session.get("meta", {})
+                        session_id = session["session_id"]
+                        created_ms: int = meta.get("createdAt") or int(datetime.now().timestamp() * 1000)
+                        session_name = meta.get("name") or f"Session {session_id[:8]}"
 
-                    try:
-                        messages = traverse_blobs(session["db_path"])
-                    except Exception:
-                        continue
+                        try:
+                            messages = traverse_blobs(session["db_path"])
+                        except Exception:
+                            continue
 
-                    bubbles = messages_to_bubbles(messages, created_ms)
-                    if not bubbles:
-                        continue
+                        bubbles = messages_to_bubbles(messages, created_ms)
+                        if not bubbles:
+                            continue
 
-                    # Derive title
-                    title = session_name
-                    if not title or title.startswith("New Agent"):
-                        for b in bubbles:
-                            if b["type"] == "user" and b.get("text"):
-                                first_lines = [l for l in b["text"].split("\n") if l.strip()]
-                                if first_lines:
-                                    title = first_lines[0][:100]
-                                break
+                        # Derive title
+                        title = session_name
+                        if not title or title.startswith("New Agent"):
+                            for b in bubbles:
+                                if b["type"] == "user" and b.get("text"):
+                                    first_lines = [ln for ln in b["text"].split("\n") if ln.strip()]
+                                    if first_lines:
+                                        title = first_lines[0][:100]
+                                    break
 
-                    bubble_texts = [b["text"] for b in bubbles if b.get("text")]
-                    exclusion_text = _build_exclusion_searchable(
-                        project_name=ws_name,
-                        chat_title=title,
-                        content_parts=bubble_texts,
-                    )
-                    if is_excluded_by_rules(rules, exclusion_text):
-                        continue
+                        bubble_texts = [b["text"] for b in bubbles if b.get("text")]
+                        exclusion_text = _build_exclusion_searchable(
+                            project_name=ws_name,
+                            chat_title=title,
+                            content_parts=bubble_texts,
+                        )
+                        if is_excluded_by_rules(rules, exclusion_text):
+                            continue
 
-                    has_match = False
-                    matching_text = ""
+                        has_match = False
+                        matching_text = ""
 
-                    if title and query_lower in title.lower():
-                        has_match = True
-                        matching_text = title
+                        if title and query_lower in title.lower():
+                            has_match = True
+                            matching_text = title
 
-                    if not has_match:
-                        for text in bubble_texts:
-                            if text and query_lower in text.lower():
-                                has_match = True
-                                idx = text.lower().find(query_lower)
-                                start = max(0, idx - 80)
-                                end = min(len(text), idx + len(query) + 120)
-                                matching_text = (
-                                    ("..." if start > 0 else "")
-                                    + text[start:end]
-                                    + ("..." if end < len(text) else "")
-                                )
-                                break
+                        if not has_match:
+                            for text in bubble_texts:
+                                if text and query_lower in text.lower():
+                                    has_match = True
+                                    idx = text.lower().find(query_lower)
+                                    start = max(0, idx - 80)
+                                    end = min(len(text), idx + len(query) + 120)
+                                    matching_text = (
+                                        ("..." if start > 0 else "")
+                                        + text[start:end]
+                                        + ("..." if end < len(text) else "")
+                                    )
+                                    break
 
-                    if has_match:
-                        results.append({
-                            "workspaceId": f"cli:{cp['project_id']}",
-                            "workspaceFolder": cp.get("workspace_path"),
-                            "chatId": session_id,
-                            "chatTitle": title,
-                            "timestamp": created_ms,
-                            "matchingText": matching_text,
-                            "type": "cli_agent",
-                            "source": "cli",
-                        })
-        except Exception as e:
-            print(f"Error searching CLI sessions: {e}")
+                        if has_match:
+                            results.append({
+                                "workspaceId": f"cli:{cp['project_id']}",
+                                "workspaceFolder": cp.get("workspace_path"),
+                                "chatId": session_id,
+                                "chatTitle": title,
+                                "timestamp": created_ms,
+                                "matchingText": matching_text,
+                                "type": "cli_agent",
+                                "source": "cli",
+                            })
+            except Exception as e:
+                print(f"Error searching CLI sessions: {e}")
 
         # Sort by timestamp descending
         def _ts(r):

@@ -359,11 +359,16 @@ class TestTraverseBlobs(unittest.TestCase):
         result = traverse_blobs(path)
         self.assertEqual(result, [msg])
 
-    def test_chain_to_json_blobs(self):
-        """Chain blob references two JSON message blobs."""
-        root_id = "0" * 64
-        msg1_id = "1" * 64
-        msg2_id = "2" * 64
+    def test_chain_preserves_chronological_order(self):
+        """Linked-list chain (newest root -> prev node -> oldest msg) must produce oldest-first output.
+
+        Mirrors the real CLI storage layout: latestRootBlobId is newest, and
+        each chain node points to an older node/message.
+        """
+        root_id = "0" * 64    # latest chain node (newest end)
+        prev_id = "f" * 64    # older chain node
+        msg1_id = "1" * 64    # oldest message (user)
+        msg2_id = "2" * 64    # newest message (assistant)
         msg1 = {"role": "user", "content": "first"}
         msg2 = {"role": "assistant", "content": "second"}
         path = self._db("chain.db")
@@ -371,11 +376,12 @@ class TestTraverseBlobs(unittest.TestCase):
             path,
             {"latestRootBlobId": root_id},
             {msg1_id: msg1, msg2_id: msg2},
-            {root_id: [msg1_id, msg2_id]},
+            # root (latest) references the newest message and a pointer to the older node;
+            # prev node references the oldest message.
+            {root_id: [msg2_id, prev_id], prev_id: [msg1_id]},
         )
         result = traverse_blobs(path)
-        self.assertIn(msg1, result)
-        self.assertIn(msg2, result)
+        self.assertEqual(result, [msg1, msg2])
 
     def test_no_cycle_in_traversal(self):
         """Cyclic references must not loop forever."""

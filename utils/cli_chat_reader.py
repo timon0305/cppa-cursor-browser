@@ -116,13 +116,16 @@ def traverse_blobs(db_path: str) -> list[dict]:
     finally:
         conn.close()
 
-    # BFS from root
+    # BFS from root (newest-first by nature of the linked-list structure);
+    # reverse at the end to restore chronological (oldest→newest) order.
+    from collections import deque
+
     visited: set[str] = set()
-    queue: list[str] = [root_id]
+    queue: deque[str] = deque([root_id])
     messages: list[dict] = []
 
     while queue:
-        bid = queue.pop(0)
+        bid = queue.popleft()
         if bid in visited:
             continue
         visited.add(bid)
@@ -134,6 +137,7 @@ def traverse_blobs(db_path: str) -> list[dict]:
                 if ref not in visited:
                     queue.append(ref)
 
+    messages.reverse()
     return messages
 
 

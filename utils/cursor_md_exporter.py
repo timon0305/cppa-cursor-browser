@@ -92,24 +92,26 @@ def cursor_cli_session_to_markdown(
             tn = tc.get("name", "unknown")
             tool_breakdown[tn] = tool_breakdown.get(tn, 0) + 1
 
-    # Frontmatter.
+    # Frontmatter.  Free-form string scalars are serialized with json.dumps()
+    # so that backslashes, newlines, and embedded quotes are all escaped safely
+    # (JSON strings are a valid YAML double-quoted scalar subset).
     fm_lines = ["---"]
-    fm_lines.append(f"log_id: {session_id}")
-    fm_lines.append(f"log_type: cli_agent")
-    fm_lines.append(f'title: "{title.replace(chr(34), chr(92) + chr(34))}"')
+    fm_lines.append(f"log_id: {json.dumps(session_id, ensure_ascii=False)}")
+    fm_lines.append("log_type: cli_agent")
+    fm_lines.append(f"title: {json.dumps(title, ensure_ascii=False)}")
     fm_lines.append(
         f"created_at: {datetime.fromtimestamp(created_ms / 1000).isoformat()}"
     )
-    fm_lines.append(f"session_id: {session_id}")
+    fm_lines.append(f"session_id: {json.dumps(session_id, ensure_ascii=False)}")
     if mode:
-        fm_lines.append(f"mode: {mode}")
+        fm_lines.append(f"mode: {json.dumps(mode, ensure_ascii=False)}")
     fm_lines.append(f"message_count: {len(bubbles)}")
     if total_tool_calls:
         fm_lines.append(f"total_tool_calls: {total_tool_calls}")
     if tool_breakdown:
         fm_lines.append("tool_call_breakdown:")
         for tn, cnt in sorted(tool_breakdown.items(), key=lambda x: -x[1]):
-            fm_lines.append(f"  {tn}: {cnt}")
+            fm_lines.append(f"  {json.dumps(tn, ensure_ascii=False)}: {cnt}")
     fm_lines.append("---")
     fm_str = "\n".join(fm_lines) + "\n\n"
 

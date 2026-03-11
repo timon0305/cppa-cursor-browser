@@ -75,7 +75,7 @@ def get_cli_chats_path() -> str:
 
     Override with the ``CLI_CHATS_PATH`` environment variable (useful in tests).
     """
-    env_path = os.environ.get("CLI_CHATS_PATH")
+    env_path = os.environ.get("CLI_CHATS_PATH", "").strip()
     if env_path:
-        return env_path
+        return expand_tilde_path(env_path)
     return os.path.join(os.path.expanduser("~"), ".cursor", "chats")
