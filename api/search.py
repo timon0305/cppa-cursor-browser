@@ -378,10 +378,15 @@ def search():
                                     break
 
                         bubble_texts = [b["text"] for b in bubbles if b.get("text")]
+                        tool_payloads = [
+                            tc.get("input") or tc.get("summary") or ""
+                            for b in bubbles
+                            for tc in (b.get("metadata") or {}).get("toolCalls") or []
+                        ]
                         exclusion_text = _build_exclusion_searchable(
                             project_name=ws_name,
                             chat_title=title,
-                            content_parts=bubble_texts,
+                            content_parts=bubble_texts + tool_payloads,
                         )
                         if is_excluded_by_rules(rules, exclusion_text):
                             continue

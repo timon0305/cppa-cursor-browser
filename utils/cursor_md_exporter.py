@@ -2,9 +2,8 @@
 
 Exposes ``cursor_cli_session_to_markdown`` — a reusable function that
 generates a complete Markdown document (YAML frontmatter + body) from a
-Cursor CLI ``store.db`` session.  The logic is extracted from
-``scripts/export.py`` so it can be called programmatically without running
-the full export CLI.
+Cursor CLI ``store.db`` session.  The logic is shared between
+``scripts/export.py`` and any programmatic caller.
 """
 
 from __future__ import annotations
@@ -12,6 +11,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from utils.cli_chat_reader import traverse_blobs, messages_to_bubbles
 
@@ -28,6 +28,9 @@ def _slug(s: str) -> str:
 def cursor_cli_session_to_markdown(
     db_path: str | Path,
     session_meta: dict | None = None,
+    workspace_info: dict | None = None,
+    bubbles: list[dict] | None = None,
+    title_override: str | None = None,
 ) -> str:
     """Generate a complete Markdown document from a Cursor CLI store.db session.
 
@@ -39,11 +42,28 @@ def cursor_cli_session_to_markdown(
         Optional dict with pre-read session metadata (keys: ``agentId``,
         ``createdAt``, ``name``, ``mode``).  If omitted, metadata is read
         from ``db_path`` automatically.
+    workspace_info:
+        Optional dict with workspace-level fields to include in frontmatter.
+        Recognised keys: ``workspace`` (slug), ``workspace_name``,
+        ``workspace_path``, ``project_id``.
+    bubbles:
+        Pre-computed bubble list from ``messages_to_bubbles()``.  When
+        provided the database is not re-read, avoiding a redundant SQL query.
+    title_override:
+        Caller-supplied title (e.g. already derived for a filename).  When
+        set, skips the first-user-message derivation heuristic.
 
     Returns
     -------
     str
         Full Markdown text including YAML frontmatter and conversation body.
+
+    Raises
+    ------
+    Exception
+        Re-raises any exception from ``traverse_blobs`` / ``messages_to_bubbles``
+        so callers can detect unreadable databases rather than silently receiving
+        an empty document.
     """
     db_path = Path(db_path)
 
@@ -63,15 +83,14 @@ def cursor_cli_session_to_markdown(
     session_name: str = session_meta.get("name") or f"Session {session_id[:8]}"
     mode: str = session_meta.get("mode", "")
 
-    # Reconstruct conversation.
-    try:
+    # Reconstruct conversation — callers may pass pre-computed bubbles to
+    # avoid a redundant DB read.  Errors propagate; caller decides how to handle.
+    if bubbles is None:
         messages = traverse_blobs(str(db_path))
         bubbles = messages_to_bubbles(messages, created_ms)
-    except Exception:
-        bubbles = []
 
     # Derive title.
-    title = session_name
+    title = title_override or session_name
     if not title or title.startswith("New Agent"):
         for b in bubbles:
             if b["type"] == "user" and b.get("text"):
@@ -102,6 +121,16 @@ def cursor_cli_session_to_markdown(
     fm_lines.append(
         f"created_at: {datetime.fromtimestamp(created_ms / 1000).isoformat()}"
     )
+    # Workspace-level fields (only when caller provides them).
+    ws_info = workspace_info or {}
+    if ws_info.get("workspace"):
+        fm_lines.append(f"workspace: {ws_info['workspace']}")
+    if ws_info.get("workspace_name"):
+        fm_lines.append(f"workspace_name: {json.dumps(ws_info['workspace_name'], ensure_ascii=False)}")
+    if ws_info.get("workspace_path"):
+        fm_lines.append(f"workspace_path: {json.dumps(ws_info['workspace_path'], ensure_ascii=False)}")
+    if ws_info.get("project_id"):
+        fm_lines.append(f"project_id: {json.dumps(ws_info['project_id'], ensure_ascii=False)}")
     fm_lines.append(f"session_id: {json.dumps(session_id, ensure_ascii=False)}")
     if mode:
         fm_lines.append(f"mode: {json.dumps(mode, ensure_ascii=False)}")
@@ -139,6 +168,11 @@ def cursor_cli_session_to_markdown(
                 body += "> **INPUT:**\n> ```\n"
                 for iline in str(tc["input"]).split("\n"):
                     body += f"> {iline}\n"
+                body += "> ```\n"
+            if tc.get("output"):
+                body += "> **OUTPUT:**\n> ```\n"
+                for oline in str(tc["output"]).split("\n"):
+                    body += f"> {oline}\n"
                 body += "> ```\n"
             body += "\n"
         body += "---\n\n"

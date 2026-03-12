@@ -219,13 +219,35 @@ def messages_to_bubbles(messages: list[dict], created_at_ms: int) -> list[dict]:
     - ``user`` messages: strip ``<user_info>`` preamble, keep query text.
     - ``assistant`` messages with text parts → ``type: "ai"`` bubble.
     - ``assistant`` messages with ``tool-call`` parts → ``type: "ai"`` bubble
-      with ``metadata.toolCalls``.
-    - ``tool`` (result) messages are skipped; their content is not separately
-      surfaced (tool call IDs link them to the preceding assistant bubble).
+      with ``metadata.toolCalls``.  The ``output`` field of each tool call is
+      populated from the corresponding ``role: "tool"`` result message (matched
+      by ``toolCallId``).
+    - ``tool`` (result) messages are used only to populate tool-call outputs;
+      they are not emitted as separate bubbles.
 
     Per-message timestamps are unavailable in CLI sessions; ``created_at_ms``
     is used for all bubbles with a 1 ms sequence offset so UI sorting is stable.
     """
+    # Pre-scan: build toolCallId → output text map from role=="tool" messages.
+    tool_outputs: dict[str, str] = {}
+    for msg in messages:
+        if msg.get("role") != "tool":
+            continue
+        content = msg.get("content", "")
+        if isinstance(content, list):
+            for part in content:
+                if not isinstance(part, dict):
+                    continue
+                if part.get("type") == "tool-result":
+                    tid = part.get("toolCallId", "")
+                    result = part.get("result", "")
+                    if tid:
+                        tool_outputs[tid] = str(result) if result else ""
+        elif isinstance(content, str) and content:
+            # Plain string result with no toolCallId — store under empty key
+            # only if not already set, to avoid clobbering a keyed entry.
+            tool_outputs.setdefault("", content)
+
     bubbles: list[dict] = []
     seq = 0
 
@@ -233,10 +255,7 @@ def messages_to_bubbles(messages: list[dict], created_at_ms: int) -> list[dict]:
         role = msg.get("role", "")
         content = msg.get("content", "")
 
-        if role == "system":
-            continue
-
-        if role == "tool":
+        if role in ("system", "tool"):
             continue
 
         ts = created_at_ms + seq
@@ -266,6 +285,7 @@ def messages_to_bubbles(messages: list[dict], created_at_ms: int) -> list[dict]:
                 for tc in tool_calls:
                     args = tc.get("args", {})
                     name = tc.get("name", "unknown")
+                    tid = tc.get("toolCallId", "")
                     # Build a human-readable summary
                     if name in ("Glob", "glob_file_search"):
                         pattern = args.get("glob_pattern") or args.get("pattern") or ""
@@ -299,8 +319,8 @@ def messages_to_bubbles(messages: list[dict], created_at_ms: int) -> list[dict]:
                         "status": "",
                         "summary": summary,
                         "input": input_display,
-                        "output": "",
-                        "toolCallId": tc.get("toolCallId", ""),
+                        "output": tool_outputs.get(tid, ""),
+                        "toolCallId": tid,
                     })
                 if not text.strip():
                     tc0 = formatted_calls[0]
@@ -371,8 +391,13 @@ def list_cli_projects(chats_path: str) -> list[dict]:
         projects[pid]["sessions"].append(session)
 
         created = session["meta"].get("createdAt") or 0
-        if created > projects[pid]["last_updated_ms"]:
-            projects[pid]["last_updated_ms"] = created
+        try:
+            mtime_ms = int(os.path.getmtime(session["db_path"]) * 1000)
+        except OSError:
+            mtime_ms = 0
+        session_ts = max(created, mtime_ms)
+        if session_ts > projects[pid]["last_updated_ms"]:
+            projects[pid]["last_updated_ms"] = session_ts
 
     # Resolve workspace path / name from a session's messages
     for pid, proj in projects.items():

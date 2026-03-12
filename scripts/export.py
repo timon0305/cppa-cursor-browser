@@ -37,6 +37,7 @@ from utils.cli_chat_reader import (
     messages_to_bubbles,
     aggregate_session_stats,
 )
+from utils.cursor_md_exporter import cursor_cli_session_to_markdown
 
 _logger = logging.getLogger(__name__)
 
@@ -861,12 +862,13 @@ def main():
             if not bubbles:
                 continue
 
-            # Derive title from first user bubble
+            # Derive title for the filename (shared exporter does it too, but
+            # we need it here first to build the output path).
             title = session_name
             if not title or title.startswith("New Agent"):
                 for b in bubbles:
                     if b["type"] == "user" and b.get("text"):
-                        first_lines = [l for l in b["text"].split("\n") if l.strip()]
+                        first_lines = [ln for ln in b["text"].split("\n") if ln.strip()]
                         if first_lines:
                             title = first_lines[0][:100]
                             if len(title) == 100:
@@ -887,73 +889,25 @@ def main():
             if is_excluded_by_rules(exclusion_rules, searchable):
                 continue
 
-            # Aggregate statistics
-            total_tool_calls = 0
-            tool_breakdown: dict = {}
-            for b in bubbles:
-                tcs = (b.get("metadata") or {}).get("toolCalls") or []
-                total_tool_calls += len(tcs)
-                for tc in tcs:
-                    tn = tc.get("name", "unknown")
-                    tool_breakdown[tn] = tool_breakdown.get(tn, 0) + 1
-
             title_slug = slug(title)
             ts_str = datetime.fromtimestamp(created_ms / 1000).strftime("%Y-%m-%dT%H-%M-%S")
             filename = f"{ts_str}__{title_slug}__{session_id[:8]}.md"
             rel_dir = os.path.join(today, ws_slug_cli, "cli")
             out_path = os.path.join(out_dir, rel_dir, filename)
 
-            # Frontmatter — free-form scalars use json.dumps() for safe YAML quoting.
-            fm_lines = ["---"]
-            fm_lines.append(f"log_id: {json.dumps(session_id, ensure_ascii=False)}")
-            fm_lines.append("log_type: cli_agent")
-            fm_lines.append(f"title: {json.dumps(title, ensure_ascii=False)}")
-            fm_lines.append(f"created_at: {datetime.fromtimestamp(created_ms / 1000).isoformat()}")
-            fm_lines.append(f"workspace: {ws_slug_cli}")
-            fm_lines.append(f"workspace_name: {json.dumps(ws_name, ensure_ascii=False)}")
-            if cp.get("workspace_path"):
-                fm_lines.append(f"workspace_path: {json.dumps(cp['workspace_path'], ensure_ascii=False)}")
-            fm_lines.append(f"project_id: {json.dumps(cp['project_id'], ensure_ascii=False)}")
-            fm_lines.append(f"session_id: {json.dumps(session_id, ensure_ascii=False)}")
-            if meta.get("mode"):
-                fm_lines.append(f"mode: {json.dumps(meta['mode'], ensure_ascii=False)}")
-            fm_lines.append(f"message_count: {len(bubbles)}")
-            if total_tool_calls:
-                fm_lines.append(f"total_tool_calls: {total_tool_calls}")
-            if tool_breakdown:
-                fm_lines.append("tool_call_breakdown:")
-                for tn, cnt in sorted(tool_breakdown.items(), key=lambda x: -x[1]):
-                    fm_lines.append(f"  {json.dumps(tn, ensure_ascii=False)}: {cnt}")
-            fm_lines.append("---")
-            fm_str = "\n".join(fm_lines) + "\n\n"
-
-            # Header
-            header_meta = [f"Created: {datetime.fromtimestamp(created_ms / 1000).strftime('%Y-%m-%d %H:%M:%S')}"]
-            if meta.get("mode"):
-                header_meta.append(f"Mode: {meta['mode']}")
-            if total_tool_calls:
-                header_meta.append(f"Tool calls: {total_tool_calls}")
-            header = f"# {title}\n\n_{' | '.join(header_meta)}_\n\n---\n\n"
-
-            # Body
-            body = ""
-            for b in bubbles:
-                role_label = "User" if b["type"] == "user" else "Assistant"
-                body += f"### {role_label}\n\n"
-                body += b.get("text", "") + "\n\n"
-                tool_calls = (b.get("metadata") or {}).get("toolCalls") or []
-                for tc in tool_calls:
-                    summary = tc.get("summary") or tc.get("name") or "unknown"
-                    body += f"> **Tool: {summary}**\n"
-                    if tc.get("input"):
-                        body += "> **INPUT:**\n> ```\n"
-                        for iline in str(tc["input"]).split("\n"):
-                            body += f"> {iline}\n"
-                        body += "> ```\n"
-                    body += "\n"
-                body += "---\n\n"
-
-            md = fm_str + header + body
+            # Delegate Markdown generation to the shared exporter.
+            md = cursor_cli_session_to_markdown(
+                session["db_path"],
+                session_meta=meta,
+                workspace_info={
+                    "workspace": ws_slug_cli,
+                    "workspace_name": ws_name,
+                    "workspace_path": cp.get("workspace_path"),
+                    "project_id": cp["project_id"],
+                },
+                bubbles=bubbles,
+                title_override=title,
+            )
             rel_path = os.path.join(today, ws_slug_cli, "cli", filename)
             exported.append({
                 "id": session_id,

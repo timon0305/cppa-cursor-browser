@@ -474,12 +474,15 @@ class TestListCliProjects(unittest.TestCase):
         self.assertIn("proj1", ids)
         self.assertIn("proj2", ids)
 
-    def test_last_updated_ms_uses_max_created_at(self):
+    def test_last_updated_ms_is_at_least_max_created_at(self):
+        # last_updated_ms = max(createdAt, store.db mtime) across all sessions.
+        # Since test files are freshly created, mtime >= createdAt always; we only
+        # assert the floor: the value must be >= max(createdAt) and > 0.
         self._make_session("proj1", "sess1", {"createdAt": 1000})
         self._make_session("proj1", "sess2", {"createdAt": 5000})
         projects = list_cli_projects(self.chats_dir)
         proj = next(p for p in projects if p["project_id"] == "proj1")
-        self.assertEqual(proj["last_updated_ms"], 5000)
+        self.assertGreaterEqual(proj["last_updated_ms"], 5000)
 
     def test_workspace_name_extracted_from_user_info(self):
         ws_path = "/home/user/my-project"
