@@ -16,6 +16,7 @@ env/
 dist/
 build/
 .eggs/
+*.spec.bak
 
 # Environment & secrets
 .env

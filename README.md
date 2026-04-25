@@ -160,6 +160,21 @@ cursor-chat-browser-python/
     └── workspace.html
 ```
 
+## Desktop App (Windows .exe)
+
+You can package the browser as a standalone desktop application with its own window - no Python installation required on the target machine.
+
+### Build
+
+```bash
+pip install pywebview pyinstaller
+pyinstaller cursor-browser.spec
+```
+
+This produces `dist/CursorChatBrowser/` containing `CursorChatBrowser.exe` and its supporting files. Move the folder anywhere you like, then pin the `.exe` to Start or the taskbar.
+
+The desktop app uses [pywebview](https://pywebview.flowrl.com/) to render the Flask UI inside a native window via Edge WebView2 (pre-installed on Windows 10/11). No HTTP server or port is opened - pywebview calls the WSGI app directly in-process.
+
 ## Technology Stack
 
 - **Backend:** Python 3, Flask

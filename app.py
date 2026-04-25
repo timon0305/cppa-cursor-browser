@@ -4,7 +4,9 @@ A Flask web application for browsing and managing chat histories
 from the Cursor editor's AI chat feature.
 """
 
+import sys
 from datetime import datetime
+from pathlib import Path
 
 from flask import Flask, render_template, send_from_directory
 
@@ -18,8 +20,24 @@ from api.config_api import bp as config_bp
 from utils.exclusion_rules import resolve_exclusion_rules_path, load_rules
 
 
+def _get_base_path():
+    """Return the directory that contains templates/ and static/.
+
+    In a PyInstaller bundle the files live under sys._MEIPASS;
+    otherwise they sit next to this source file.
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys._MEIPASS)
+    return Path(__file__).resolve().parent
+
+
 def create_app(exclusion_rules_path=None):
-    app = Flask(__name__, static_folder="static", template_folder="templates")
+    base = _get_base_path()
+    app = Flask(
+        __name__,
+        static_folder=str(base / "static"),
+        template_folder=str(base / "templates"),
+    )
     app.config["JSON_SORT_KEYS"] = False
 
     # Exclusion rules: optional path (CLI or default ~/.cursor-chat-browser/exclusion-rules.txt).
