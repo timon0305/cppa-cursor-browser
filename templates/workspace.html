@@ -312,12 +312,10 @@ function fmtNum(n) {
 }
 
 function renderMarkdown(text) {
-  if (!text) return '';
-  try {
-    return marked.parse(text, { breaks: true, gfm: true });
-  } catch (e) {
-    return escapeHtml(text);
-  }
+  // Delegate to the shared sanitised helper in static/js/app.js — every
+  // markdown render in this app must flow through DOMPurify before
+  // hitting innerHTML (issue #11). Do not re-add a raw marked.parse here.
+  return renderMarkdownSafe(text);
 }
 
 document.addEventListener('click', e => {
