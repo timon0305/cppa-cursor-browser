@@ -13,6 +13,7 @@ import sys
 from flask import Blueprint, jsonify, request
 
 from utils.path_helpers import expand_tilde_path
+from utils.path_validation import WorkspacePathError, validate_workspace_path
 from utils.workspace_path import set_workspace_path_override
 
 bp = Blueprint("config_api", __name__)
@@ -75,14 +76,21 @@ def validate_path():
 
 @bp.route("/api/set-workspace", methods=["POST"])
 def set_workspace():
+    body = request.get_json(silent=True) or {}
+    raw = body.get("path", "")
+    # Validate the supplied path BEFORE storing the override (issue #15).
+    # validate_workspace_path collapses `..` traversal AND resolves symlinks
+    # via realpath, then enforces that the canonical target is an existing
+    # directory containing Cursor workspace markers. Returns the canonical
+    # path so we store that, not whatever the caller sent.
     try:
-        body = request.get_json(silent=True) or {}
-        path = body.get("path", "")
-        expanded = expand_tilde_path(path)
-        set_workspace_path_override(expanded)
-        return jsonify({"success": True})
-    except Exception:
-        return jsonify({"error": "Failed to set workspace path"}), 500
+        canonical = validate_workspace_path(raw)
+    except WorkspacePathError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception:  # noqa: BLE001 — only here as a fallback
+        return jsonify({"error": "Failed to validate workspace path"}), 500
+    set_workspace_path_override(canonical)
+    return jsonify({"success": True, "path": canonical})
 
 
 @bp.route("/api/get-username")
